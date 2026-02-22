@@ -23,7 +23,7 @@ final class FinderSync: FIFinderSync {
         archiveItem.target = self
         menu.addItem(archiveItem)
 
-        if AudioSelectionGate.allSupportedAudio(urls: urls) {
+        if VideoSelectionGate.isSingleSupportedVideo(urls: urls) {
             let convertItem = NSMenuItem(title: "Convert", action: #selector(handleConvert(_:)), keyEquivalent: "")
             convertItem.target = self
             menu.addItem(convertItem)
@@ -53,7 +53,7 @@ final class FinderSync: FIFinderSync {
         let urls = selectedFileURLs()
         guard !urls.isEmpty else { return }
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
-        guard AudioSelectionGate.allSupportedAudio(urls: urls) else { return }
+        guard VideoSelectionGate.isSingleSupportedVideo(urls: urls) else { return }
 
         let paths = urls.map(\.path)
         guard

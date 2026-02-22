@@ -109,4 +109,16 @@ struct FormatKitTests {
         let m4aCollision = ConvertNameBuilder.outputURL(for: source, outputFormat: .m4a, fileManager: fileManager)
         #expect(m4aCollision.lastPathComponent == "song 2.m4a")
     }
+
+    @Test func videoOutputOptionsHideSameContainer() {
+        let supported: [VideoOutputFormat] = [.mp4, .mov, .m4v]
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mp4, supportedOutputs: supported) == [.mov, .m4v])
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported) == [.mp4, .m4v])
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .m4v, supportedOutputs: supported) == [.mp4, .mov])
+    }
+
+    @Test func videoOutputOptionsCanBecomeEmptyAfterFiltering() {
+        let supported: [VideoOutputFormat] = [.mov]
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported).isEmpty)
+    }
 }

@@ -103,6 +103,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleConvertRequest(rawPaths: [String]) {
+        if handleVideoConvertRequestIfNeeded(rawPaths: rawPaths) {
+            return
+        }
+
         let selection: [URL]
         do {
             selection = try validateAudioSelection(paths: rawPaths)
@@ -136,6 +140,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let job = ConvertJob(selection: selection, outputFormat: outputFormat)
         startConverting(job)
+    }
+
+    private func handleVideoConvertRequestIfNeeded(rawPaths: [String]) -> Bool {
+        let urls: [URL]
+        do {
+            urls = try validateCommonSelection(paths: rawPaths)
+        } catch {
+            return false
+        }
+
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
+            return false
+        }
+        guard VideoSelectionGate.isSingleSupportedVideo(urls: urls) else {
+            return false
+        }
+
+        guard let sourceURL = urls.first else { return false }
+        do {
+            try validateVideoAssetPreflight(sourceURL: sourceURL)
+        } catch {
+            presentErrorAndMaybeTerminate(title: "Convert Failed", message: error.localizedDescription)
+            return true
+        }
+
+        guard let sourceInputFormat = VideoInputFormat.fromURL(sourceURL) else {
+            return false
+        }
+
+        let supportedOutputs = Self.availableVideoOutputFormats(for: sourceURL)
+        let allowedOutputs = VideoOutputOptionFilter.alternativeOutputs(
+            sourceInput: sourceInputFormat,
+            supportedOutputs: supportedOutputs
+        )
+        guard !allowedOutputs.isEmpty else {
+            presentErrorAndMaybeTerminate(
+                title: "Convert not available for this file.",
+                message: "No alternative output formats available."
+            )
+            return true
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard let outputFormat = presentVideoConvertModal(allowedFormats: allowedOutputs) else {
+            NSApp.terminate(nil)
+            return true
+        }
+
+        let job = VideoConvertJob(sourceURL: sourceURL, outputFormat: outputFormat)
+        startVideoConverting(job)
+        return true
     }
 
     private func validateCommonSelection(paths: [String]) throws -> [URL] {
@@ -175,6 +230,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return urls
     }
 
+    private func validateVideoAssetPreflight(sourceURL: URL) throws {
+        let asset = AVURLAsset(url: sourceURL)
+        let videoTracks = asset.tracks(withMediaType: .video)
+        guard !videoTracks.isEmpty else {
+            throw VideoPreflightError.noVideoTrack
+        }
+    }
+
     private func presentCompressModal() -> ArchiveFormat? {
         let formats = ArchiveFormat.allCases
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
@@ -212,6 +275,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return allowedFormats.first(where: { $0.displayName == title })
     }
 
+    private func presentVideoConvertModal(allowedFormats options: [VideoOutputFormat]) -> VideoOutputFormat? {
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
+        popup.addItems(withTitles: options.map(\.displayName))
+        popup.selectItem(at: 0)
+
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = "Convert"
+        alert.informativeText = "Choose a format."
+        alert.accessoryView = popup
+        alert.addButton(withTitle: "Convert")
+        alert.addButton(withTitle: "Cancel")
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let title = popup.titleOfSelectedItem ?? ""
+        return options.first(where: { $0.displayName == title })
+    }
+
     private func startArchiving(_ job: ArchiveJob) {
         isArchiving = true
         let progressWindowController = ArchivingProgressWindowController(statusText: "Archiving…")
@@ -237,6 +318,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         compressionQueue.async { [job] in
             let result = Self.runConversions(job)
+            DispatchQueue.main.async {
+                self.progressWindowController?.close()
+                self.progressWindowController = nil
+                self.isArchiving = false
+                self.presentConvertCompletion(for: result)
+            }
+        }
+    }
+
+    private func startVideoConverting(_ job: VideoConvertJob) {
+        isArchiving = true
+        let progressWindowController = ArchivingProgressWindowController(statusText: "Converting")
+        self.progressWindowController = progressWindowController
+        progressWindowController.show()
+
+        compressionQueue.async { [job] in
+            let result = Self.runVideoConversion(job)
             DispatchQueue.main.async {
                 self.progressWindowController?.close()
                 self.progressWindowController = nil
@@ -374,6 +472,93 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         return .success(outputURLs)
+    }
+
+    private static func runVideoConversion(_ job: VideoConvertJob) -> ConvertRunResult {
+        switch runSingleVideoConversion(job) {
+        case .success(let outputURL):
+            return .success([outputURL])
+        case .failure(let details):
+            return .failure(details)
+        }
+    }
+
+    private static func runSingleVideoConversion(_ job: VideoConvertJob) -> ConvertSingleResult {
+        let asset = AVURLAsset(url: job.sourceURL)
+        let presetName = videoExportPresetName(sourceURL: job.sourceURL, outputFormat: job.outputFormat)
+
+        guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to create a video export session.",
+                    diagnosticOutput: "AVAssetExportSession init returned nil for preset \(presetName)"
+                )
+            )
+        }
+
+        let outputFileType = job.outputFormat.avFileType
+        guard session.supportedFileTypes.contains(outputFileType) else {
+            let supportedTypesDescription = session.supportedFileTypes.map(\.rawValue).joined(separator: ", ")
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "The selected output format is not supported for this file.",
+                    diagnosticOutput: "Unsupported file type \(outputFileType.rawValue); supported: \(supportedTypesDescription)"
+                )
+            )
+        }
+
+        session.outputURL = job.outputURL
+        session.outputFileType = outputFileType
+        session.shouldOptimizeForNetworkUse = false
+
+        let semaphore = DispatchSemaphore(value: 0)
+        session.exportAsynchronously {
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        switch session.status {
+        case .completed:
+            guard isValidOutputFile(at: job.outputURL) else {
+                return .failure(
+                    ConvertFailureDetails(
+                        userFacingMessage: "Convert finished, but the output file was missing or empty.",
+                        diagnosticOutput: job.outputURL.path
+                    )
+                )
+            }
+            guard outputContainerMatchesSelection(outputURL: job.outputURL, expectedFormat: job.outputFormat) else {
+                return .failure(
+                    ConvertFailureDetails(
+                        userFacingMessage: "Convert finished, but the output file format did not match the selected container.",
+                        diagnosticOutput: "Expected \(job.outputFormat.fileExtension), got \(job.outputURL.pathExtension.lowercased())"
+                    )
+                )
+            }
+            return .success(job.outputURL)
+        case .failed:
+            let message = session.error?.localizedDescription ?? "Unknown AVFoundation export error."
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert \(job.sourceURL.lastPathComponent).\n\n\(message)",
+                    diagnosticOutput: String(describing: session.error)
+                )
+            )
+        case .cancelled:
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Conversion was cancelled for \(job.sourceURL.lastPathComponent).",
+                    diagnosticOutput: "AVAssetExportSession cancelled"
+                )
+            )
+        default:
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Conversion did not complete for \(job.sourceURL.lastPathComponent).",
+                    diagnosticOutput: "Unexpected export status: \(session.status.rawValue), error: \(String(describing: session.error))"
+                )
+            )
+        }
     }
 
     private static func runSingleConversion(_ task: ConvertTask) -> ConvertSingleResult {
@@ -517,6 +702,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return fileManager.fileExists(atPath: url.path) && fileSize.int64Value > 0
     }
 
+    private static func videoExportPresetName(sourceURL: URL, outputFormat: VideoOutputFormat) -> String {
+        let sourceContainer = videoContainerKind(for: sourceURL)
+        let targetContainer = outputFormat.containerKind
+        if sourceContainer == targetContainer {
+            return AVAssetExportPresetPassthrough
+        }
+        return AVAssetExportPresetHighestQuality
+    }
+
+    private static func videoContainerKind(for url: URL) -> VideoContainerKind? {
+        switch url.pathExtension.lowercased() {
+        case "mp4", "m4v":
+            return .mp4Family
+        case "mov":
+            return .mov
+        default:
+            return nil
+        }
+    }
+
+    private static func outputContainerMatchesSelection(outputURL: URL, expectedFormat: VideoOutputFormat) -> Bool {
+        outputURL.pathExtension.lowercased() == expectedFormat.fileExtension
+    }
+
+    private static func availableVideoOutputFormats(for sourceURL: URL) -> [VideoOutputFormat] {
+        let asset = AVURLAsset(url: sourceURL)
+        return VideoOutputFormat.allCases.filter { outputFormat in
+            let presetName = videoExportPresetName(sourceURL: sourceURL, outputFormat: outputFormat)
+            guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
+                return false
+            }
+            return session.supportedFileTypes.contains(outputFormat.avFileType)
+        }
+    }
+
     private static func diagnosticSnippet(from text: String, maxLines: Int = 20) -> String {
         text
             .split(whereSeparator: \.isNewline)
@@ -535,6 +755,17 @@ private enum ValidationError: LocalizedError {
             return "No items were selected."
         case .invalidSelection(let message):
             return message
+        }
+    }
+}
+
+private enum VideoPreflightError: LocalizedError {
+    case noVideoTrack
+
+    var errorDescription: String? {
+        switch self {
+        case .noVideoTrack:
+            return "The selected file does not contain a video track."
         }
     }
 }
@@ -571,6 +802,18 @@ private struct ConvertTask {
     let sourceURL: URL
     let outputURL: URL
     let outputFormat: AudioOutputFormat
+}
+
+private struct VideoConvertJob {
+    let sourceURL: URL
+    let outputFormat: VideoOutputFormat
+    let outputURL: URL
+
+    init(sourceURL: URL, outputFormat: VideoOutputFormat) {
+        self.sourceURL = sourceURL
+        self.outputFormat = outputFormat
+        self.outputURL = VideoConvertNameBuilder.outputURL(for: sourceURL, outputFormat: outputFormat)
+    }
 }
 
 private enum ArchiveRunResult {
@@ -631,6 +874,11 @@ private enum ConvertEngineError: LocalizedError {
             return "Audio conversion returned an unexpected status."
         }
     }
+}
+
+private enum VideoContainerKind {
+    case mp4Family
+    case mov
 }
 
 private final class ArchivingProgressWindowController: NSWindowController {
@@ -755,5 +1003,29 @@ private func makeOutputAudioConfiguration(
         )
     case .mp3:
         throw ConvertEngineError.unsupportedOutputFormat
+    }
+}
+
+private extension VideoOutputFormat {
+    var avFileType: AVFileType {
+        switch self {
+        case .mp4:
+            return .mp4
+        case .mov:
+            return .mov
+        case .m4v:
+            return .m4v
+        }
+    }
+
+    var containerKind: VideoContainerKind {
+        switch self {
+        case .mp4:
+            return .mp4Family
+        case .mov:
+            return .mov
+        case .m4v:
+            return .mp4Family
+        }
     }
 }

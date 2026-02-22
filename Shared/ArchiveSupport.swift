@@ -215,3 +215,72 @@ enum ConvertNameBuilder {
         }
     }
 }
+
+enum VideoInputFormat: String, CaseIterable {
+    case mp4
+    case mov
+    case m4v
+
+    nonisolated static func fromURL(_ url: URL) -> VideoInputFormat? {
+        VideoInputFormat(rawValue: url.pathExtension.lowercased())
+    }
+}
+
+enum VideoSelectionGate {
+    nonisolated static func isSingleSupportedVideo(urls: [URL]) -> Bool {
+        guard urls.count == 1, let url = urls.first else { return false }
+        return VideoInputFormat.fromURL(url) != nil
+    }
+}
+
+enum VideoOutputFormat: String, CaseIterable {
+    case mp4
+    case mov
+    case m4v
+
+    nonisolated var displayName: String { rawValue.uppercased() }
+    nonisolated var fileExtension: String { rawValue }
+
+    nonisolated static func fromInputFormat(_ input: VideoInputFormat) -> VideoOutputFormat {
+        switch input {
+        case .mp4: return .mp4
+        case .mov: return .mov
+        case .m4v: return .m4v
+        }
+    }
+}
+
+enum VideoOutputOptionFilter {
+    nonisolated static func alternativeOutputs(
+        sourceInput: VideoInputFormat,
+        supportedOutputs: [VideoOutputFormat]
+    ) -> [VideoOutputFormat] {
+        let sourceOutput = VideoOutputFormat.fromInputFormat(sourceInput)
+        return supportedOutputs.filter { $0 != sourceOutput }
+    }
+}
+
+enum VideoConvertNameBuilder {
+    nonisolated static func outputURL(for sourceURL: URL, outputFormat: VideoOutputFormat, fileManager: FileManager = .default) -> URL {
+        let directory = sourceURL.deletingLastPathComponent()
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        return uniqueOutputURL(directory: directory, baseName: stem, outputFormat: outputFormat, fileManager: fileManager)
+    }
+
+    nonisolated private static func uniqueOutputURL(
+        directory: URL,
+        baseName: String,
+        outputFormat: VideoOutputFormat,
+        fileManager: FileManager
+    ) -> URL {
+        var attempt = 0
+        while true {
+            let suffix = attempt == 0 ? "" : " \(attempt + 1)"
+            let candidate = directory.appendingPathComponent("\(baseName)\(suffix).\(outputFormat.fileExtension)")
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+}
