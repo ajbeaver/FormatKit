@@ -4,14 +4,16 @@ import Foundation
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
+    private let payloadStore = HandoffPayloadStore()
+    private var isArchiving = false
+    private var progressWindowController: ArchivingProgressWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls {
-            handleIncomingURL(url)
-        }
+        guard let firstURL = urls.first else { return }
+        handleIncomingURL(firstURL)
     }
 
     static func openFinderExtensionSettings() {
@@ -22,261 +24,320 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func handleIncomingURL(_ url: URL) {
+        guard !isArchiving else {
+            presentErrorAndMaybeTerminate(
+                title: "Archive In Progress",
+                message: "FormatKit is already archiving another selection."
+            )
+            return
+        }
+
         guard
             url.scheme?.lowercased() == "formatkit",
             let action = url.host?.lowercased(),
             action == "archive",
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let encodedPaths = components.queryItems?.first(where: { $0.name == "paths" })?.value,
-            let data = Data(base64Encoded: encodedPaths),
-            let rawPaths = try? JSONDecoder().decode([String].self, from: data)
+            let token = components.queryItems?.first(where: { $0.name == "token" })?.value
         else {
+            presentErrorAndMaybeTerminate(title: "Invalid Request", message: "The archive request URL was malformed.")
             return
         }
 
-        let urls = rawPaths.map { URL(fileURLWithPath: $0) }
-        guard !urls.isEmpty else { return }
+        let selection: [URL]
+        do {
+            let paths = try payloadStore.consumePaths(token: token)
+            selection = try validateSelection(paths: paths)
+        } catch {
+            presentErrorAndMaybeTerminate(
+                title: "Archive Request Failed",
+                message: "Could not read the selection payload. \(error.localizedDescription)"
+            )
+            return
+        }
 
         NSApp.activate(ignoringOtherApps: true)
-        let format = presentCompressModal(selectionCount: urls.count)
-        guard let format else { return }
-
-        compressionQueue.async { [urls] in
-            for url in urls {
-                Self.compressItem(at: url, format: format)
-            }
+        guard let format = presentCompressModal() else {
+            NSApp.terminate(nil)
+            return
         }
+
+        let job: ArchiveJob
+        do {
+            job = try ArchiveJob(selection: selection, format: format)
+        } catch let error as ArchiveNamingError {
+            let message: String
+            switch error {
+            case .emptySelection:
+                message = "No items were selected to archive."
+            case .mixedParentDirectories:
+                message = "All selected items must be in the same folder for a single archive."
+            }
+            presentErrorAndMaybeTerminate(title: "Invalid Selection", message: message)
+            return
+        } catch {
+            presentErrorAndMaybeTerminate(title: "Invalid Selection", message: error.localizedDescription)
+            return
+        }
+
+        startArchiving(job)
     }
 
-    private func presentCompressModal(selectionCount: Int) -> CompressionFormat? {
-        let availableFormats = CompressionFormat.availableFormats(forSelectionCount: selectionCount)
-        guard !availableFormats.isEmpty else { return nil }
+    private func validateSelection(paths: [String]) throws -> [URL] {
+        guard !paths.isEmpty else {
+            throw ValidationError.emptySelection
+        }
 
+        let fileManager = FileManager.default
+        let urls = paths.map { URL(fileURLWithPath: $0) }
+        for url in urls {
+            guard url.isFileURL else {
+                throw ValidationError.invalidSelection("Selection contained a non-file URL.")
+            }
+            guard fileManager.fileExists(atPath: url.path) else {
+                throw ValidationError.invalidSelection("Selected item no longer exists: \(url.lastPathComponent)")
+            }
+        }
+
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
+            throw ValidationError.invalidSelection("Selection contains an item that is already an archive.")
+        }
+
+        return urls
+    }
+
+    private func presentCompressModal() -> ArchiveFormat? {
+        let formats = ArchiveFormat.allCases
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
-        popup.addItems(withTitles: availableFormats.map(\.displayName))
+        popup.addItems(withTitles: formats.map(\.pickerDisplayName))
         popup.selectItem(at: 0)
 
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "Archive"
-        alert.informativeText = ""
+        alert.informativeText = "Choose a format."
         alert.accessoryView = popup
         alert.addButton(withTitle: "Archive")
         alert.addButton(withTitle: "Cancel")
 
-        let response = alert.runModal()
-        guard response == .alertFirstButtonReturn else { return nil }
-
-        let selectedIndex = popup.indexOfSelectedItem
-        guard availableFormats.indices.contains(selectedIndex) else { return .zip }
-        return availableFormats[selectedIndex]
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let title = popup.titleOfSelectedItem ?? ""
+        return ArchiveFormat.fromPickerDisplayName(title) ?? .zip
     }
 
-    private static func compressItem(at url: URL, format: CompressionFormat) {
-        let fileManager = FileManager.default
-        let parentDirectory = url.deletingLastPathComponent()
-        let itemName = url.lastPathComponent
-        let process = Process()
-        process.currentDirectoryURL = parentDirectory
-        process.standardOutput = nil
-        process.standardError = nil
-        var rawPlan: RawCompressionPlan?
+    private func startArchiving(_ job: ArchiveJob) {
+        isArchiving = true
+        let progressWindowController = ArchivingProgressWindowController()
+        self.progressWindowController = progressWindowController
+        progressWindowController.show()
 
-        switch format {
-        case .zip:
-            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
-            process.arguments = ["-r", outputURL.lastPathComponent, itemName]
-        case .tarGz:
-            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            process.arguments = ["-czf", outputURL.lastPathComponent, itemName]
-        case .tarBz2:
-            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            process.arguments = ["-cjf", outputURL.lastPathComponent, itemName]
-        case .tarXz:
-            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-            process.arguments = ["-cJf", outputURL.lastPathComponent, itemName]
-        case .gz, .bz2, .xz:
-            rawPlan = configureRawCompressionProcess(
-                process,
-                sourceURL: url,
-                format: format,
-                fileManager: fileManager
-            )
+        compressionQueue.async { [job] in
+            let result = Self.runArchive(job)
+            DispatchQueue.main.async {
+                self.progressWindowController?.close()
+                self.progressWindowController = nil
+                self.isArchiving = false
+                self.presentCompletion(for: result, outputURL: job.outputURL)
+            }
         }
+    }
+
+    private func presentCompletion(for result: ArchiveRunResult, outputURL: URL) {
+        switch result {
+        case .success:
+            let alert = NSAlert()
+            alert.alertStyle = .informational
+            alert.messageText = "Archive Complete"
+            alert.informativeText = outputURL.path
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+        case .failure(let details):
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "Archive Failed"
+            alert.informativeText = details.userFacingMessage
+            alert.addButton(withTitle: "OK")
+            _ = alert.runModal()
+            if !details.diagnosticOutput.isEmpty {
+                NSLog("FormatKit archive error output:\n%@", details.diagnosticOutput)
+            }
+        }
+
+        NSApp.terminate(nil)
+    }
+
+    private func presentErrorAndMaybeTerminate(title: String, message: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        _ = alert.runModal()
+        if !isArchiving {
+            NSApp.terminate(nil)
+        }
+    }
+
+    private static func runArchive(_ job: ArchiveJob) -> ArchiveRunResult {
+        let process = Process()
+        process.executableURL = job.format.executableURL
+        process.currentDirectoryURL = job.workingDirectory
+        process.arguments = job.format.processArguments(
+            outputFileName: job.outputURL.lastPathComponent,
+            relativeItemNames: job.relativeItemNames
+        )
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
         do {
             try process.run()
             process.waitUntilExit()
-            cleanupRawCompressionTempLinkIfNeeded(rawPlan, fileManager: fileManager)
         } catch {
-            cleanupRawCompressionTempLinkIfNeeded(rawPlan, fileManager: fileManager)
-            // Minimal v1: fail silently and return.
+            return .failure(
+                ArchiveFailureDetails(
+                    userFacingMessage: "Failed to launch the archive tool: \(error.localizedDescription)",
+                    diagnosticOutput: ""
+                )
+            )
         }
+
+        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let combinedDiagnostics = [stderr, stdout]
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .joined(separator: "\n")
+
+        guard process.terminationStatus == 0 else {
+            let snippet = diagnosticSnippet(from: stderr.isEmpty ? stdout : stderr)
+            let message = snippet.isEmpty
+                ? "The archive tool exited with status \(process.terminationStatus)."
+                : "The archive tool exited with status \(process.terminationStatus).\n\n\(snippet)"
+            return .failure(ArchiveFailureDetails(userFacingMessage: message, diagnosticOutput: combinedDiagnostics))
+        }
+
+        guard isValidArchiveOutput(at: job.outputURL) else {
+            let snippet = diagnosticSnippet(from: stderr.isEmpty ? stdout : stderr)
+            let message = snippet.isEmpty
+                ? "Archive command finished, but the output file was missing or empty."
+                : "Archive command finished, but the output file was missing or empty.\n\n\(snippet)"
+            return .failure(ArchiveFailureDetails(userFacingMessage: message, diagnosticOutput: combinedDiagnostics))
+        }
+
+        return .success
     }
 
-    private static func uniqueOutputURL(nextTo url: URL, format: CompressionFormat, fileManager: FileManager) -> URL {
-        let parentDirectory = url.deletingLastPathComponent()
-        let stem: String
-        if format.isTarContainer {
-            let baseName = url.deletingPathExtension().lastPathComponent
-            stem = baseName.isEmpty ? url.lastPathComponent : baseName
-        } else {
-            stem = url.lastPathComponent
-        }
-        let archiveSuffix = format.archiveSuffix
-
-        var attempt = 0
-        while true {
-            let suffix: String
-            if attempt == 0 {
-                suffix = ""
-            } else if format.isRawCompression {
-                suffix = "_\(attempt)"
-            } else {
-                suffix = " \(attempt + 1)"
-            }
-            let filename = "\(stem)\(suffix)\(archiveSuffix)"
-            let candidate = parentDirectory.appendingPathComponent(filename)
-            if !fileManager.fileExists(atPath: candidate.path) {
-                return candidate
-            }
-            attempt += 1
-        }
+    private static func isValidArchiveOutput(at url: URL) -> Bool {
+        let fileManager = FileManager.default
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return false }
+        guard let fileSize = attributes[.size] as? NSNumber else { return false }
+        return fileManager.fileExists(atPath: url.path) && fileSize.int64Value > 0
     }
 
-    private static func configureRawCompressionProcess(
-        _ process: Process,
-        sourceURL: URL,
-        format: CompressionFormat,
-        fileManager: FileManager
-    ) -> RawCompressionPlan {
-        let outputURL = uniqueOutputURL(nextTo: sourceURL, format: format, fileManager: fileManager)
-        let defaultOutputURL = sourceURL.appendingPathExtension(format.rawCompressionExtension)
-
-        if outputURL.path == defaultOutputURL.path {
-            process.executableURL = format.executableURL
-            process.arguments = ["-k", sourceURL.lastPathComponent]
-            return RawCompressionPlan(tempLinkURL: nil)
-        }
-
-        let tempLinkURL = outputURL.deletingPathExtension()
-        try? fileManager.removeItem(at: tempLinkURL)
-        do {
-            try fileManager.linkItem(at: sourceURL, to: tempLinkURL)
-            process.executableURL = format.executableURL
-            process.arguments = ["-k", tempLinkURL.lastPathComponent]
-            return RawCompressionPlan(tempLinkURL: tempLinkURL)
-        } catch {
-            do {
-                try fileManager.copyItem(at: sourceURL, to: tempLinkURL)
-                process.executableURL = format.executableURL
-                process.arguments = ["-k", tempLinkURL.lastPathComponent]
-                return RawCompressionPlan(tempLinkURL: tempLinkURL)
-            } catch {
-                process.executableURL = format.executableURL
-                process.arguments = ["-k", sourceURL.lastPathComponent]
-                return RawCompressionPlan(tempLinkURL: nil)
-            }
-        }
-    }
-
-    private static func cleanupRawCompressionTempLinkIfNeeded(
-        _ plan: RawCompressionPlan?,
-        fileManager: FileManager
-    ) {
-        guard let tempLinkURL = plan?.tempLinkURL else { return }
-        try? fileManager.removeItem(at: tempLinkURL)
+    private static func diagnosticSnippet(from text: String, maxLines: Int = 20) -> String {
+        text
+            .split(whereSeparator: \.isNewline)
+            .prefix(maxLines)
+            .joined(separator: "\n")
     }
 }
 
-private enum CompressionFormat: CaseIterable {
-    case zip
-    case tarGz
-    case tarBz2
-    case tarXz
-    case gz
-    case bz2
-    case xz
+private enum ValidationError: LocalizedError {
+    case emptySelection
+    case invalidSelection(String)
 
-    var displayName: String {
+    var errorDescription: String? {
         switch self {
-        case .zip: return "ZIP"
-        case .tarGz: return "TAR.GZ"
-        case .tarBz2: return "TAR.BZ2"
-        case .tarXz: return "TAR.XZ"
-        case .gz: return "GZ"
-        case .bz2: return "BZ2"
-        case .xz: return "XZ"
+        case .emptySelection:
+            return "No items were selected."
+        case .invalidSelection(let message):
+            return message
         }
-    }
-
-    var archiveSuffix: String {
-        switch self {
-        case .zip: return ".zip"
-        case .tarGz: return ".tar.gz"
-        case .tarBz2: return ".tar.bz2"
-        case .tarXz: return ".tar.xz"
-        case .gz: return ".gz"
-        case .bz2: return ".bz2"
-        case .xz: return ".xz"
-        }
-    }
-
-    var isTarContainer: Bool {
-        switch self {
-        case .tarGz, .tarBz2, .tarXz:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var isRawCompression: Bool {
-        switch self {
-        case .gz, .bz2, .xz:
-            return true
-        default:
-            return false
-        }
-    }
-
-    var rawCompressionExtension: String {
-        switch self {
-        case .gz: return "gz"
-        case .bz2: return "bz2"
-        case .xz: return "xz"
-        default: return ""
-        }
-    }
-
-    var executableURL: URL {
-        switch self {
-        case .gz:
-            return URL(fileURLWithPath: "/usr/bin/gzip")
-        case .bz2:
-            return URL(fileURLWithPath: "/usr/bin/bzip2")
-        case .xz:
-            return URL(fileURLWithPath: "/usr/bin/xz")
-        case .zip:
-            return URL(fileURLWithPath: "/usr/bin/zip")
-        case .tarGz, .tarBz2, .tarXz:
-            return URL(fileURLWithPath: "/usr/bin/tar")
-        }
-    }
-
-    static func availableFormats(forSelectionCount count: Int) -> [CompressionFormat] {
-        let multiFileFormats: [CompressionFormat] = [.zip, .tarGz, .tarBz2, .tarXz]
-        if count == 1 {
-            return multiFileFormats + [.gz, .bz2, .xz]
-        }
-        return multiFileFormats
     }
 }
 
-private struct RawCompressionPlan {
-    let tempLinkURL: URL?
+private struct ArchiveJob {
+    let selection: [URL]
+    let format: ArchiveFormat
+    let workingDirectory: URL
+    let relativeItemNames: [String]
+    let outputURL: URL
+
+    init(selection: [URL], format: ArchiveFormat, now: Date = Date()) throws {
+        self.selection = selection
+        self.format = format
+        workingDirectory = try ArchiveNameBuilder.commonParentDirectory(for: selection)
+        relativeItemNames = try ArchiveNameBuilder.relativeItemNames(for: selection)
+        outputURL = try ArchiveNameBuilder.outputURL(for: selection, format: format, now: now)
+    }
+}
+
+private enum ArchiveRunResult {
+    case success
+    case failure(ArchiveFailureDetails)
+}
+
+private struct ArchiveFailureDetails {
+    let userFacingMessage: String
+    let diagnosticOutput: String
+}
+
+private final class ArchivingProgressWindowController: NSWindowController {
+    init() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 120),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "FormatKit"
+        window.isReleasedWhenClosed = false
+        window.level = .floating
+        window.standardWindowButton(.closeButton)?.isEnabled = false
+        window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        window.standardWindowButton(.zoomButton)?.isHidden = true
+
+        let contentView = NSView(frame: window.contentView?.bounds ?? .zero)
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .regular
+        spinner.isIndeterminate = true
+        spinner.startAnimation(nil)
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+
+        let label = NSTextField(labelWithString: "Archiving…")
+        label.font = .systemFont(ofSize: 15, weight: .medium)
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        contentView.addSubview(spinner)
+        contentView.addSubview(label)
+        window.contentView = contentView
+
+        NSLayoutConstraint.activate([
+            spinner.centerXAnchor.constraint(equalTo: contentView.centerXAnchor),
+            spinner.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
+            label.topAnchor.constraint(equalTo: spinner.bottomAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            label.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16)
+        ])
+
+        super.init(window: window)
+        shouldCascadeWindows = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show() {
+        window?.center()
+        showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
 }

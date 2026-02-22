@@ -66,16 +66,21 @@
 			path = FormatKitTests;
 			sourceTree = "<group>";
 		};
-		171761132F4ACE6900DC1C99 /* FormatKitUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FormatKitUITests;
-			sourceTree = "<group>";
-		};
-		A10000022F4B000100000001 /* FormatKitFinderExtension */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = FormatKitFinderExtension;
-			sourceTree = "<group>";
-		};
+			171761132F4ACE6900DC1C99 /* FormatKitUITests */ = {
+				isa = PBXFileSystemSynchronizedRootGroup;
+				path = FormatKitUITests;
+				sourceTree = "<group>";
+			};
+			A10000102F4B000100000001 /* Shared */ = {
+				isa = PBXFileSystemSynchronizedRootGroup;
+				path = Shared;
+				sourceTree = "<group>";
+			};
+			A10000022F4B000100000001 /* FormatKitFinderExtension */ = {
+				isa = PBXFileSystemSynchronizedRootGroup;
+				path = FormatKitFinderExtension;
+				sourceTree = "<group>";
+			};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -112,12 +117,13 @@
 /* Begin PBXGroup section */
 		171760F02F4ACE6900DC1C99 = {
 			isa = PBXGroup;
-			children = (
-				171760FB2F4ACE6900DC1C99 /* FormatKit */,
-				A10000022F4B000100000001 /* FormatKitFinderExtension */,
-				171761092F4ACE6900DC1C99 /* FormatKitTests */,
-				171761132F4ACE6900DC1C99 /* FormatKitUITests */,
-				171760FA2F4ACE6900DC1C99 /* Products */,
+				children = (
+					171760FB2F4ACE6900DC1C99 /* FormatKit */,
+					A10000102F4B000100000001 /* Shared */,
+					A10000022F4B000100000001 /* FormatKitFinderExtension */,
+					171761092F4ACE6900DC1C99 /* FormatKitTests */,
+					171761132F4ACE6900DC1C99 /* FormatKitUITests */,
+					171760FA2F4ACE6900DC1C99 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
@@ -149,9 +155,10 @@
 			dependencies = (
 				A10000092F4B000100000001 /* PBXTargetDependency */,
 			);
-			fileSystemSynchronizedGroups = (
-				171760FB2F4ACE6900DC1C99 /* FormatKit */,
-			);
+				fileSystemSynchronizedGroups = (
+					171760FB2F4ACE6900DC1C99 /* FormatKit */,
+					A10000102F4B000100000001 /* Shared */,
+				);
 			name = FormatKit;
 			packageProductDependencies = (
 			);
@@ -217,9 +224,10 @@
 			);
 			dependencies = (
 			);
-			fileSystemSynchronizedGroups = (
-				A10000022F4B000100000001 /* FormatKitFinderExtension */,
-			);
+				fileSystemSynchronizedGroups = (
+					A10000102F4B000100000001 /* Shared */,
+					A10000022F4B000100000001 /* FormatKitFinderExtension */,
+				);
 			name = FormatKitFinderExtension;
 			packageProductDependencies = (
 			);

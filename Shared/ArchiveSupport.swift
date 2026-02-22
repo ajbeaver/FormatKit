@@ -1,0 +1,231 @@
+import Foundation
+import Darwin
+
+enum ArchiveFormat: CaseIterable {
+    case zip
+    case tarGz
+    case tarXz
+
+    var pickerDisplayName: String {
+        switch self {
+        case .zip: return "ZIP"
+        case .tarGz: return "GZ"
+        case .tarXz: return "XZ"
+        }
+    }
+
+    static func fromPickerDisplayName(_ name: String) -> ArchiveFormat? {
+        allCases.first { $0.pickerDisplayName == name }
+    }
+
+    var archiveSuffix: String {
+        switch self {
+        case .zip: return ".zip"
+        case .tarGz: return ".tar.gz"
+        case .tarXz: return ".tar.xz"
+        }
+    }
+
+    var executableURL: URL {
+        switch self {
+        case .zip:
+            return URL(fileURLWithPath: "/usr/bin/zip")
+        case .tarGz, .tarXz:
+            return URL(fileURLWithPath: "/usr/bin/tar")
+        }
+    }
+
+    func processArguments(outputFileName: String, relativeItemNames: [String]) -> [String] {
+        switch self {
+        case .zip:
+            return ["-r", outputFileName] + relativeItemNames
+        case .tarGz:
+            return ["-czf", outputFileName] + relativeItemNames
+        case .tarXz:
+            return ["-cJf", outputFileName] + relativeItemNames
+        }
+    }
+}
+
+enum ArchiveSelectionGate {
+    private static let archivedSuffixes = [
+        ".tar.gz", ".tar.xz", ".tgz", ".txz", ".zip", ".tar", ".gz", ".xz", ".bz2"
+    ]
+
+    static func containsArchivedItem(urls: [URL]) -> Bool {
+        urls.contains(where: isArchivedURL)
+    }
+
+    static func isArchivedURL(_ url: URL) -> Bool {
+        let lowercasedName = url.lastPathComponent.lowercased()
+        return archivedSuffixes.contains { lowercasedName.hasSuffix($0) }
+    }
+}
+
+enum ArchiveNamingError: Error {
+    case emptySelection
+    case mixedParentDirectories
+}
+
+enum ArchiveNameBuilder {
+    static func outputURL(for selection: [URL], format: ArchiveFormat, now: Date = Date(), fileManager: FileManager = .default) throws -> URL {
+        guard !selection.isEmpty else { throw ArchiveNamingError.emptySelection }
+
+        if selection.count == 1, let item = selection.first {
+            let directory = item.deletingLastPathComponent()
+            let baseName = singleSelectionBaseName(for: item, format: format)
+            return uniqueArchiveURL(directory: directory, baseName: baseName, format: format, fileManager: fileManager)
+        }
+
+        let directory = try commonParentDirectory(for: selection)
+        let baseName = multiSelectionBaseName(now: now)
+        return uniqueArchiveURL(directory: directory, baseName: baseName, format: format, fileManager: fileManager)
+    }
+
+    static func relativeItemNames(for selection: [URL]) throws -> [String] {
+        guard !selection.isEmpty else { throw ArchiveNamingError.emptySelection }
+        _ = try commonParentDirectory(for: selection)
+        return selection.map(\.lastPathComponent)
+    }
+
+    static func commonParentDirectory(for selection: [URL]) throws -> URL {
+        guard let first = selection.first else { throw ArchiveNamingError.emptySelection }
+        let firstParent = first.deletingLastPathComponent().standardizedFileURL
+        let hasMixedParents = selection.dropFirst().contains {
+            $0.deletingLastPathComponent().standardizedFileURL != firstParent
+        }
+        guard !hasMixedParents else { throw ArchiveNamingError.mixedParentDirectories }
+        return firstParent
+    }
+
+    static func singleSelectionBaseName(for item: URL, format: ArchiveFormat) -> String {
+        switch format {
+        case .zip:
+            return item.lastPathComponent
+        case .tarGz, .tarXz:
+            let baseName = item.deletingPathExtension().lastPathComponent
+            return baseName.isEmpty ? item.lastPathComponent : baseName
+        }
+    }
+
+    static func multiSelectionBaseName(now: Date = Date()) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return "archive_\(formatter.string(from: now))"
+    }
+
+    static func uniqueArchiveURL(directory: URL, baseName: String, format: ArchiveFormat, fileManager: FileManager = .default) -> URL {
+        var attempt = 0
+        while true {
+            let suffix = attempt == 0 ? "" : " \(attempt + 1)"
+            let candidate = directory.appendingPathComponent(baseName + suffix + format.archiveSuffix)
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+}
+
+struct HandoffPayload: Codable {
+    let paths: [String]
+}
+
+enum HandoffPayloadStoreError: LocalizedError {
+    case invalidToken
+    case emptyPaths
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidToken:
+            return "The handoff token was invalid."
+        case .emptyPaths:
+            return "The handoff payload did not contain any selected items."
+        }
+    }
+}
+
+struct HandoffPayloadStore {
+    static let appGroupIdentifier = "group.com.ajbeaver.FormatKit"
+
+    private let fileManager: FileManager
+    private let appGroupIdentifierOverride: String?
+    private let fallbackBaseDirectory: URL?
+
+    init(
+        fileManager: FileManager = .default,
+        appGroupIdentifierOverride: String? = nil,
+        fallbackBaseDirectory: URL? = nil
+    ) {
+        self.fileManager = fileManager
+        self.appGroupIdentifierOverride = appGroupIdentifierOverride
+        self.fallbackBaseDirectory = fallbackBaseDirectory
+    }
+
+    func writePaths(_ paths: [String]) throws -> String {
+        guard !paths.isEmpty else { throw HandoffPayloadStoreError.emptyPaths }
+        let token = UUID().uuidString.lowercased()
+        let url = try payloadFileURL(for: token)
+        let data = try JSONEncoder().encode(HandoffPayload(paths: paths))
+        try ensureBaseDirectoryExists(for: url.deletingLastPathComponent())
+        try data.write(to: url, options: .atomic)
+        return token
+    }
+
+    func consumePaths(token: String) throws -> [String] {
+        let url = try payloadFileURL(for: token)
+        defer {
+            try? fileManager.removeItem(at: url)
+        }
+        let data = try Data(contentsOf: url)
+        let payload = try JSONDecoder().decode(HandoffPayload.self, from: data)
+        guard !payload.paths.isEmpty else { throw HandoffPayloadStoreError.emptyPaths }
+        return payload.paths
+    }
+
+    func payloadFileURL(for token: String) throws -> URL {
+        guard Self.isValidToken(token) else { throw HandoffPayloadStoreError.invalidToken }
+        let baseDirectory = try resolvedBaseDirectory()
+        return baseDirectory.appendingPathComponent("\(token).json", isDirectory: false)
+    }
+
+    func resolvedBaseDirectory() throws -> URL {
+        if let appGroupIdentifier = appGroupIdentifierOverride ?? Optional(Self.appGroupIdentifier),
+           let appGroupURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            return appGroupURL.appendingPathComponent("Handoffs", isDirectory: true)
+        }
+
+        if let fallbackBaseDirectory {
+            return fallbackBaseDirectory
+        }
+
+        let uid = getuid()
+        return URL(fileURLWithPath: "/tmp", isDirectory: true)
+            .appendingPathComponent("FormatKit-Handoffs-\(uid)", isDirectory: true)
+    }
+
+    private func ensureBaseDirectoryExists(for directory: URL) throws {
+        var isDirectory: ObjCBool = false
+        if fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory) {
+            if isDirectory.boolValue {
+                return
+            }
+            try fileManager.removeItem(at: directory)
+        }
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private static func isValidToken(_ token: String) -> Bool {
+        guard !token.isEmpty else { return false }
+        return token.unicodeScalars.allSatisfy { scalar in
+            switch scalar {
+            case "a"..."z", "A"..."Z", "0"..."9", "-", "_":
+                return true
+            default:
+                return false
+            }
+        }
+    }
+}
