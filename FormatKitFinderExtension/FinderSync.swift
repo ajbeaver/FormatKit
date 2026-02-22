@@ -15,12 +15,20 @@ final class FinderSync: FIFinderSync {
 
         let urls = selectedFileURLs()
         guard !urls.isEmpty else { return nil }
-        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return nil }
+        let containsArchived = ArchiveSelectionGate.containsArchivedItem(urls: urls)
+        guard !containsArchived else { return nil }
 
         let menu = NSMenu(title: "")
-        let item = NSMenuItem(title: "Archive", action: #selector(handleArchive(_:)), keyEquivalent: "")
-        item.target = self
-        menu.addItem(item)
+        let archiveItem = NSMenuItem(title: "Archive", action: #selector(handleArchive(_:)), keyEquivalent: "")
+        archiveItem.target = self
+        menu.addItem(archiveItem)
+
+        if AudioSelectionGate.allSupportedAudio(urls: urls) {
+            let convertItem = NSMenuItem(title: "Convert", action: #selector(handleConvert(_:)), keyEquivalent: "")
+            convertItem.target = self
+            menu.addItem(convertItem)
+        }
+
         return menu
     }
 
@@ -41,14 +49,36 @@ final class FinderSync: FIFinderSync {
         NSWorkspace.shared.open(url)
     }
 
+    @objc private func handleConvert(_ sender: Any?) {
+        let urls = selectedFileURLs()
+        guard !urls.isEmpty else { return }
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
+        guard AudioSelectionGate.allSupportedAudio(urls: urls) else { return }
+
+        let paths = urls.map(\.path)
+        guard
+            let jsonData = try? JSONEncoder().encode(paths),
+            let components = urlComponents(action: "convert", withBase64Paths: jsonData.base64EncodedString()),
+            let url = components.url
+        else {
+            return
+        }
+
+        NSWorkspace.shared.open(url)
+    }
+
     private func selectedFileURLs() -> [URL] {
         (controller.selectedItemURLs() ?? []).filter(\.isFileURL)
     }
 
     private func archiveURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
+        urlComponents(action: "archive", withBase64Paths: encodedPaths)
+    }
+
+    private func urlComponents(action: String, withBase64Paths encodedPaths: String) -> URLComponents? {
         var components = URLComponents()
         components.scheme = "formatkit"
-        components.host = "archive"
+        components.host = action
         components.queryItems = [URLQueryItem(name: "paths", value: encodedPaths)]
         return components
     }

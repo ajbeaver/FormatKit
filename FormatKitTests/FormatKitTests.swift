@@ -63,4 +63,50 @@ struct FormatKitTests {
         #expect(ArchiveFormat.tarXz.processArguments(outputFileName: "a.tar.xz", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-cJf", "a.tar.xz"]))
         #expect(ArchiveFormat.zip.processArguments(outputFileName: "a.zip", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-r", "a.zip"]))
     }
+
+    @Test func audioDetectionGatingOnlyAcceptsSupportedAudioExtensions() {
+        let allAudio = [
+            URL(fileURLWithPath: "/tmp/a.mp3"),
+            URL(fileURLWithPath: "/tmp/b.m4a"),
+            URL(fileURLWithPath: "/tmp/c.WAV"),
+            URL(fileURLWithPath: "/tmp/d.aiff"),
+            URL(fileURLWithPath: "/tmp/e.flac")
+        ]
+        #expect(AudioSelectionGate.allSupportedAudio(urls: allAudio))
+
+        let mixed = [
+            URL(fileURLWithPath: "/tmp/a.mp3"),
+            URL(fileURLWithPath: "/tmp/b.txt")
+        ]
+        #expect(!AudioSelectionGate.allSupportedAudio(urls: mixed))
+        #expect(AudioSelectionGate.inputFormats(for: mixed) == nil)
+    }
+
+    @Test func audioConversionMatrixMatchesMvpRules() {
+        #expect(AudioConversionMatrix.allowedOutputs(for: .mp3) == [.m4a, .wav, .aiff])
+        #expect(AudioConversionMatrix.allowedOutputs(for: .m4a) == [.mp3, .wav, .aiff])
+        #expect(AudioConversionMatrix.allowedOutputs(for: .wav) == [.m4a, .mp3, .aiff])
+        #expect(AudioConversionMatrix.allowedOutputs(for: .aiff) == [.m4a, .mp3, .wav])
+        #expect(AudioConversionMatrix.allowedOutputs(for: .flac) == [.m4a, .mp3, .wav])
+
+        let intersection = AudioConversionMatrix.allowedOutputs(for: [.mp3, .flac])
+        #expect(intersection == [.m4a, .wav])
+    }
+
+    @Test func convertOutputNamingIsCollisionSafe() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let source = tempRoot.appendingPathComponent("song.mp3")
+        try Data("x".utf8).write(to: source)
+
+        let m4aURL = ConvertNameBuilder.outputURL(for: source, outputFormat: .m4a, fileManager: fileManager)
+        #expect(m4aURL.lastPathComponent == "song.m4a")
+        try Data("occupied".utf8).write(to: m4aURL)
+
+        let m4aCollision = ConvertNameBuilder.outputURL(for: source, outputFormat: .m4a, fileManager: fileManager)
+        #expect(m4aCollision.lastPathComponent == "song 2.m4a")
+    }
 }

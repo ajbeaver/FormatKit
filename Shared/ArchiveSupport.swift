@@ -5,7 +5,7 @@ enum ArchiveFormat: CaseIterable {
     case tarGz
     case tarXz
 
-    var pickerDisplayName: String {
+    nonisolated var pickerDisplayName: String {
         switch self {
         case .zip: return "ZIP"
         case .tarGz: return "GZ"
@@ -13,11 +13,11 @@ enum ArchiveFormat: CaseIterable {
         }
     }
 
-    static func fromPickerDisplayName(_ name: String) -> ArchiveFormat? {
+    nonisolated static func fromPickerDisplayName(_ name: String) -> ArchiveFormat? {
         allCases.first { $0.pickerDisplayName == name }
     }
 
-    var archiveSuffix: String {
+    nonisolated var archiveSuffix: String {
         switch self {
         case .zip: return ".zip"
         case .tarGz: return ".tar.gz"
@@ -25,7 +25,7 @@ enum ArchiveFormat: CaseIterable {
         }
     }
 
-    var executableURL: URL {
+    nonisolated var executableURL: URL {
         switch self {
         case .zip:
             return URL(fileURLWithPath: "/usr/bin/zip")
@@ -34,7 +34,7 @@ enum ArchiveFormat: CaseIterable {
         }
     }
 
-    func processArguments(outputFileName: String, relativeItemNames: [String]) -> [String] {
+    nonisolated func processArguments(outputFileName: String, relativeItemNames: [String]) -> [String] {
         switch self {
         case .zip:
             return ["-r", outputFileName] + relativeItemNames
@@ -47,15 +47,15 @@ enum ArchiveFormat: CaseIterable {
 }
 
 enum ArchiveSelectionGate {
-    private static let archivedSuffixes = [
+    nonisolated private static let archivedSuffixes = [
         ".tar.gz", ".tar.xz", ".tgz", ".txz", ".zip", ".tar", ".gz", ".xz", ".bz2"
     ]
 
-    static func containsArchivedItem(urls: [URL]) -> Bool {
+    nonisolated static func containsArchivedItem(urls: [URL]) -> Bool {
         urls.contains(where: isArchivedURL)
     }
 
-    static func isArchivedURL(_ url: URL) -> Bool {
+    nonisolated static func isArchivedURL(_ url: URL) -> Bool {
         let lowercasedName = url.lastPathComponent.lowercased()
         return archivedSuffixes.contains { lowercasedName.hasSuffix($0) }
     }
@@ -67,7 +67,7 @@ enum ArchiveNamingError: Error {
 }
 
 enum ArchiveNameBuilder {
-    static func outputURL(for selection: [URL], format: ArchiveFormat, now: Date = Date(), fileManager: FileManager = .default) throws -> URL {
+    nonisolated static func outputURL(for selection: [URL], format: ArchiveFormat, now: Date = Date(), fileManager: FileManager = .default) throws -> URL {
         guard !selection.isEmpty else { throw ArchiveNamingError.emptySelection }
 
         if selection.count == 1, let item = selection.first {
@@ -81,13 +81,13 @@ enum ArchiveNameBuilder {
         return uniqueArchiveURL(directory: directory, baseName: baseName, format: format, fileManager: fileManager)
     }
 
-    static func relativeItemNames(for selection: [URL]) throws -> [String] {
+    nonisolated static func relativeItemNames(for selection: [URL]) throws -> [String] {
         guard !selection.isEmpty else { throw ArchiveNamingError.emptySelection }
         _ = try commonParentDirectory(for: selection)
         return selection.map(\.lastPathComponent)
     }
 
-    static func commonParentDirectory(for selection: [URL]) throws -> URL {
+    nonisolated static func commonParentDirectory(for selection: [URL]) throws -> URL {
         guard let first = selection.first else { throw ArchiveNamingError.emptySelection }
         let firstParent = first.deletingLastPathComponent().standardizedFileURL
         let hasMixedParents = selection.dropFirst().contains {
@@ -97,7 +97,7 @@ enum ArchiveNameBuilder {
         return firstParent
     }
 
-    static func singleSelectionBaseName(for item: URL, format: ArchiveFormat) -> String {
+    nonisolated static func singleSelectionBaseName(for item: URL, format: ArchiveFormat) -> String {
         switch format {
         case .zip:
             return item.lastPathComponent
@@ -107,7 +107,7 @@ enum ArchiveNameBuilder {
         }
     }
 
-    static func multiSelectionBaseName(now: Date = Date()) -> String {
+    nonisolated static func multiSelectionBaseName(now: Date = Date()) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.timeZone = .current
@@ -115,11 +115,99 @@ enum ArchiveNameBuilder {
         return "archive_\(formatter.string(from: now))"
     }
 
-    static func uniqueArchiveURL(directory: URL, baseName: String, format: ArchiveFormat, fileManager: FileManager = .default) -> URL {
+    nonisolated static func uniqueArchiveURL(directory: URL, baseName: String, format: ArchiveFormat, fileManager: FileManager = .default) -> URL {
         var attempt = 0
         while true {
             let suffix = attempt == 0 ? "" : " \(attempt + 1)"
             let candidate = directory.appendingPathComponent(baseName + suffix + format.archiveSuffix)
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+}
+
+enum AudioInputFormat: String, CaseIterable {
+    case mp3
+    case m4a
+    case wav
+    case aiff
+    case flac
+
+    nonisolated static func fromURL(_ url: URL) -> AudioInputFormat? {
+        let ext = url.pathExtension.lowercased()
+        return AudioInputFormat(rawValue: ext)
+    }
+}
+
+enum AudioOutputFormat: String, CaseIterable {
+    case mp3
+    case m4a
+    case wav
+    case aiff
+
+    nonisolated var displayName: String { rawValue.uppercased() }
+
+    nonisolated var fileExtension: String { rawValue }
+}
+
+enum AudioSelectionGate {
+    nonisolated static func allSupportedAudio(urls: [URL]) -> Bool {
+        guard !urls.isEmpty else { return false }
+        return urls.allSatisfy { AudioInputFormat.fromURL($0) != nil }
+    }
+
+    nonisolated static func inputFormats(for urls: [URL]) -> [AudioInputFormat]? {
+        let formats = urls.compactMap(AudioInputFormat.fromURL(_:))
+        guard formats.count == urls.count else { return nil }
+        return formats
+    }
+}
+
+enum AudioConversionMatrix {
+    nonisolated static func allowedOutputs(for input: AudioInputFormat) -> [AudioOutputFormat] {
+        switch input {
+        case .mp3:
+            return [.m4a, .wav, .aiff]
+        case .m4a:
+            return [.mp3, .wav, .aiff]
+        case .wav:
+            return [.m4a, .mp3, .aiff]
+        case .aiff:
+            return [.m4a, .mp3, .wav]
+        case .flac:
+            return [.m4a, .mp3, .wav]
+        }
+    }
+
+    nonisolated static func allowedOutputs(for inputs: [AudioInputFormat]) -> [AudioOutputFormat] {
+        guard let first = inputs.first else { return [] }
+        var allowed = Set(allowedOutputs(for: first))
+        for input in inputs.dropFirst() {
+            allowed.formIntersection(Set(allowedOutputs(for: input)))
+        }
+        return AudioOutputFormat.allCases.filter { allowed.contains($0) }
+    }
+}
+
+enum ConvertNameBuilder {
+    nonisolated static func outputURL(for sourceURL: URL, outputFormat: AudioOutputFormat, fileManager: FileManager = .default) -> URL {
+        let directory = sourceURL.deletingLastPathComponent()
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        return uniqueOutputURL(directory: directory, baseName: stem, outputFormat: outputFormat, fileManager: fileManager)
+    }
+
+    nonisolated private static func uniqueOutputURL(
+        directory: URL,
+        baseName: String,
+        outputFormat: AudioOutputFormat,
+        fileManager: FileManager
+    ) -> URL {
+        var attempt = 0
+        while true {
+            let suffix = attempt == 0 ? "" : " \(attempt + 1)"
+            let candidate = directory.appendingPathComponent("\(baseName)\(suffix).\(outputFormat.fileExtension)")
             if !fileManager.fileExists(atPath: candidate.path) {
                 return candidate
             }
