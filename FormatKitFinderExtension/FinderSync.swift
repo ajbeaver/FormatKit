@@ -4,7 +4,6 @@ import Foundation
 
 final class FinderSync: FIFinderSync {
     private let controller = FIFinderSyncController.default()
-    private let notificationCenter = DistributedNotificationCenter.default()
 
     override init() {
         super.init()
@@ -31,17 +30,15 @@ final class FinderSync: FIFinderSync {
         guard !urls.isEmpty else { return }
 
         let paths = urls.map(\.path)
-        let userInfo: [String: Any] = [
-            "action": "compress",
-            "paths": paths,
-        ]
+        guard
+            let jsonData = try? JSONEncoder().encode(paths),
+            let components = compressURLComponents(withBase64Paths: jsonData.base64EncodedString()),
+            let url = components.url
+        else {
+            return
+        }
 
-        notificationCenter.postNotificationName(
-            .formatKitFinderAction,
-            object: nil,
-            userInfo: userInfo,
-            deliverImmediately: true
-        )
+        NSWorkspace.shared.open(url)
     }
 
     private func selectedFileURLs() -> [URL] {
@@ -64,6 +61,14 @@ final class FinderSync: FIFinderSync {
         let lowercased = url.lastPathComponent.lowercased()
         return lowercased.hasSuffix(".zip") || lowercased.hasSuffix(".tar.gz") || lowercased.hasSuffix(".tgz")
     }
+
+    private func compressURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
+        var components = URLComponents()
+        components.scheme = "formatkit"
+        components.host = "compress"
+        components.queryItems = [URLQueryItem(name: "paths", value: encodedPaths)]
+        return components
+    }
 }
 
 private enum SelectionKind {
@@ -71,8 +76,4 @@ private enum SelectionKind {
     case onlyNonArchives
     case mixed
     case onlyArchives
-}
-
-private extension Notification.Name {
-    static let formatKitFinderAction = Notification.Name("com.ajbeaver.FormatKit.finderAction")
 }

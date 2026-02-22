@@ -34,6 +34,20 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000062F4B000100000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000072F4B000100000001 /* FormatKitFinderExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		171760F92F4ACE6900DC1C99 /* FormatKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FormatKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		171761062F4ACE6900DC1C99 /* FormatKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FormatKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -63,20 +77,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
-
-/* Begin PBXCopyFilesBuildPhase section */
-		A10000062F4B000100000001 /* Embed App Extensions */ = {
-			isa = PBXCopyFilesBuildPhase;
-			buildActionMask = 2147483647;
-			dstPath = "";
-			dstSubfolderSpec = 13;
-			files = (
-				A10000072F4B000100000001 /* FormatKitFinderExtension.appex in Embed App Extensions */,
-			);
-			name = "Embed App Extensions";
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		171760F62F4ACE6900DC1C99 /* Frameworks */ = {
@@ -159,28 +159,6 @@
 			productReference = 171760F92F4ACE6900DC1C99 /* FormatKit.app */;
 			productType = "com.apple.product-type.application";
 		};
-		A10000082F4B000100000001 /* FormatKitFinderExtension */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */;
-			buildPhases = (
-				A10000052F4B000100000001 /* Sources */,
-				A10000032F4B000100000001 /* Frameworks */,
-				A10000042F4B000100000001 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				A10000022F4B000100000001 /* FormatKitFinderExtension */,
-			);
-			name = FormatKitFinderExtension;
-			packageProductDependencies = (
-			);
-			productName = FormatKitFinderExtension;
-			productReference = A10000012F4B000100000001 /* FormatKitFinderExtension.appex */;
-			productType = "com.apple.product-type.app-extension";
-		};
 		171761052F4ACE6900DC1C99 /* FormatKitTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 1717611D2F4ACE6900DC1C99 /* Build configuration list for PBXNativeTarget "FormatKitTests" */;
@@ -227,6 +205,28 @@
 			productReference = 171761102F4ACE6900DC1C99 /* FormatKitUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		A10000082F4B000100000001 /* FormatKitFinderExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */;
+			buildPhases = (
+				A10000052F4B000100000001 /* Sources */,
+				A10000032F4B000100000001 /* Frameworks */,
+				A10000042F4B000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000022F4B000100000001 /* FormatKitFinderExtension */,
+			);
+			name = FormatKitFinderExtension;
+			packageProductDependencies = (
+			);
+			productName = FormatKitFinderExtension;
+			productReference = A10000012F4B000100000001 /* FormatKitFinderExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -240,9 +240,6 @@
 					171760F82F4ACE6900DC1C99 = {
 						CreatedOnToolsVersion = 26.2;
 					};
-					A10000082F4B000100000001 = {
-						CreatedOnToolsVersion = 26.2;
-					};
 					171761052F4ACE6900DC1C99 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 171760F82F4ACE6900DC1C99;
@@ -250,6 +247,9 @@
 					1717610F2F4ACE6900DC1C99 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 171760F82F4ACE6900DC1C99;
+					};
+					A10000082F4B000100000001 = {
+						CreatedOnToolsVersion = 26.2;
 					};
 				};
 			};
@@ -338,11 +338,6 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		A10000092F4B000100000001 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = A10000082F4B000100000001 /* FormatKitFinderExtension */;
-			targetProxy = A100000A2F4B000100000001 /* PBXContainerItemProxy */;
-		};
 		171761082F4ACE6900DC1C99 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 171760F82F4ACE6900DC1C99 /* FormatKit */;
@@ -352,6 +347,11 @@
 			isa = PBXTargetDependency;
 			target = 171760F82F4ACE6900DC1C99 /* FormatKit */;
 			targetProxy = 171761112F4ACE6900DC1C99 /* PBXContainerItemProxy */;
+		};
+		A10000092F4B000100000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000082F4B000100000001 /* FormatKitFinderExtension */;
+			targetProxy = A100000A2F4B000100000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -488,7 +488,8 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FormatKit/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -518,7 +519,8 @@
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FormatKit/Info.plist;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -693,15 +695,6 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				A100000B2F4B000100000001 /* Debug */,
-				A100000C2F4B000100000001 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		1717611D2F4ACE6900DC1C99 /* Build configuration list for PBXNativeTarget "FormatKitTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -716,6 +709,15 @@
 			buildConfigurations = (
 				171761212F4ACE6900DC1C99 /* Debug */,
 				171761222F4ACE6900DC1C99 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000B2F4B000100000001 /* Debug */,
+				A100000C2F4B000100000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

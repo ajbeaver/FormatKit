@@ -3,28 +3,33 @@ import Foundation
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let notificationCenter = DistributedNotificationCenter.default()
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        notificationCenter.addObserver(
-            self,
-            selector: #selector(handleFinderActionNotification(_:)),
-            name: .formatKitFinderAction,
-            object: nil
-        )
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        notificationCenter.removeObserver(self)
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            handleIncomingURL(url)
+        }
     }
 
-    @objc private func handleFinderActionNotification(_ notification: Notification) {
+    static func openFinderExtensionSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.Extensions-Settings.extension") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func handleIncomingURL(_ url: URL) {
         guard
-            let userInfo = notification.userInfo,
-            let action = userInfo["action"] as? String,
+            url.scheme?.lowercased() == "formatkit",
+            let action = url.host?.lowercased(),
             action == "compress",
-            let rawPaths = userInfo["paths"] as? [String]
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+            let encodedPaths = components.queryItems?.first(where: { $0.name == "paths" })?.value,
+            let data = Data(base64Encoded: encodedPaths),
+            let rawPaths = try? JSONDecoder().decode([String].self, from: data)
         else {
             return
         }
@@ -129,8 +134,4 @@ private enum CompressionFormat: CaseIterable {
         case .tarGz: return ".tar.gz"
         }
     }
-}
-
-private extension Notification.Name {
-    static let formatKitFinderAction = Notification.Name("com.ajbeaver.FormatKit.finderAction")
 }

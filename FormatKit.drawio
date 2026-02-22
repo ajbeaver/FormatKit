@@ -1,0 +1,88 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/29.5.1 Chrome/142.0.7444.265 Electron/39.6.1 Safari/537.36" version="29.5.1">
+  <diagram name="Page-1" id="jICjU86Ap1njEszOERzq">
+    <mxGraphModel dx="831" dy="706" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-29" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-4" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;User right-clicks file&lt;br&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="320" y="120" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;div&gt;&lt;br&gt;&lt;/div&gt;Finder Extension evaluates selection&lt;br&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="320" y="190" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-14" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-13" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-28" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-27" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;div&gt;&lt;p class=&quot;p1&quot;&gt;Finder Extension injects menu items&lt;/p&gt;&lt;/div&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="320" y="270" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-18" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-7" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;p class=&quot;p1&quot;&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;User clicks “Convert”&lt;/span&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="355" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-21" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-7" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-8" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;p class=&quot;p1&quot;&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Finder Extension sends selected URLs to FormatKit.app&lt;/span&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="430" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-23" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-8" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-9" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;arcSize=22;" value="&lt;p class=&quot;p1&quot;&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Main app opens lightweight config window&lt;/span&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="510" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-24" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-9" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-10" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-9" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;p class=&quot;p1&quot;&gt;User selects output format&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="590" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-25" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-10" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-11" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-10" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;p class=&quot;p1&quot;&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;App performs conversion in background&lt;/span&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="670" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-26" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-11" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-12" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-11" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;p class=&quot;p1&quot;&gt;&lt;span style=&quot;background-color: transparent; color: light-dark(rgb(0, 0, 0), rgb(255, 255, 255));&quot;&gt;Optional small progress UI&lt;/span&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="750" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-12" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="&lt;p class=&quot;p1&quot;&gt;Files written next to originals&lt;/p&gt;" vertex="1">
+          <mxGeometry height="50" width="120" x="680" y="830" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-16" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-15" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-20" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-13" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-19" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-13" parent="1" style="whiteSpace=wrap;html=1;rounded=1;arcSize=22;" value="Convert" vertex="1">
+          <mxGeometry height="60" width="120" x="480" y="255" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-17" edge="1" parent="1" source="9oQf722Gv-xaMXEQa-s6-15" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" target="9oQf722Gv-xaMXEQa-s6-5" value="">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-15" parent="1" style="whiteSpace=wrap;html=1;rounded=1;arcSize=22;" value="Audio" vertex="1">
+          <mxGeometry height="60" width="120" x="540" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-19" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="Video" vertex="1">
+          <mxGeometry height="60" width="120" x="420" y="350" as="geometry" />
+        </mxCell>
+        <mxCell id="9oQf722Gv-xaMXEQa-s6-27" parent="1" style="whiteSpace=wrap;html=1;rounded=1;arcSize=22;" value="Compress" vertex="1">
+          <mxGeometry height="60" width="120" x="250" y="350" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
