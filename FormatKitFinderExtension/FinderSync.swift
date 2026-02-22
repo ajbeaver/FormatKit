@@ -4,7 +4,6 @@ import Foundation
 
 final class FinderSync: FIFinderSync {
     private let controller = FIFinderSyncController.default()
-    private let payloadStore = HandoffPayloadStore()
 
     override init() {
         super.init()
@@ -19,7 +18,7 @@ final class FinderSync: FIFinderSync {
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return nil }
 
         let menu = NSMenu(title: "")
-        let item = NSMenuItem(title: "Archive…", action: #selector(handleArchive(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: "Archive", action: #selector(handleArchive(_:)), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
         return menu
@@ -30,26 +29,27 @@ final class FinderSync: FIFinderSync {
         guard !urls.isEmpty else { return }
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
 
-        do {
-            let token = try payloadStore.writePaths(urls.map(\.path))
-            guard let components = archiveURLComponents(token: token), let url = components.url else {
-                return
-            }
-            NSWorkspace.shared.open(url)
-        } catch {
-            NSLog("FormatKit Finder extension failed to handoff selection: %@", String(describing: error))
+        let paths = urls.map(\.path)
+        guard
+            let jsonData = try? JSONEncoder().encode(paths),
+            let components = archiveURLComponents(withBase64Paths: jsonData.base64EncodedString()),
+            let url = components.url
+        else {
+            return
         }
+
+        NSWorkspace.shared.open(url)
     }
 
     private func selectedFileURLs() -> [URL] {
         (controller.selectedItemURLs() ?? []).filter(\.isFileURL)
     }
 
-    private func archiveURLComponents(token: String) -> URLComponents? {
+    private func archiveURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
         var components = URLComponents()
         components.scheme = "formatkit"
         components.host = "archive"
-        components.queryItems = [URLQueryItem(name: "token", value: token)]
+        components.queryItems = [URLQueryItem(name: "paths", value: encodedPaths)]
         return components
     }
 }

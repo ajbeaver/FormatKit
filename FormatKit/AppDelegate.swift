@@ -4,7 +4,6 @@ import Foundation
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
-    private let payloadStore = HandoffPayloadStore()
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
 
@@ -37,7 +36,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let action = url.host?.lowercased(),
             action == "archive",
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let token = components.queryItems?.first(where: { $0.name == "token" })?.value
+            let encodedPaths = components.queryItems?.first(where: { $0.name == "paths" })?.value,
+            let data = Data(base64Encoded: encodedPaths),
+            let rawPaths = try? JSONDecoder().decode([String].self, from: data)
         else {
             presentErrorAndMaybeTerminate(title: "Invalid Request", message: "The archive request URL was malformed.")
             return
@@ -45,12 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let selection: [URL]
         do {
-            let paths = try payloadStore.consumePaths(token: token)
-            selection = try validateSelection(paths: paths)
+            selection = try validateSelection(paths: rawPaths)
         } catch {
             presentErrorAndMaybeTerminate(
                 title: "Archive Request Failed",
-                message: "Could not read the selection payload. \(error.localizedDescription)"
+                message: "Could not read the selected item paths. \(error.localizedDescription)"
             )
             return
         }

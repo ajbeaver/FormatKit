@@ -53,27 +53,6 @@ struct FormatKitTests {
         #expect(multiZipCollision.lastPathComponent == multiZip.deletingPathExtension().lastPathComponent + " 2.zip")
     }
 
-    @Test func tokenPayloadWriteReadDeleteFlow() throws {
-        let fileManager = FileManager.default
-        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? fileManager.removeItem(at: tempRoot) }
-
-        let store = HandoffPayloadStore(
-            fileManager: fileManager,
-            appGroupIdentifierOverride: nil,
-            fallbackBaseDirectory: tempRoot
-        )
-
-        let paths = ["/tmp/a.txt", "/tmp/b.txt"]
-        let token = try store.writePaths(paths)
-        let payloadURL = try store.payloadFileURL(for: token)
-        #expect(fileManager.fileExists(atPath: payloadURL.path))
-
-        let consumedPaths = try store.consumePaths(token: token)
-        #expect(consumedPaths == paths)
-        #expect(!fileManager.fileExists(atPath: payloadURL.path))
-    }
-
     @Test func uiFormatNamesMapToTarFormatsAndFlags() {
         #expect(ArchiveFormat.fromPickerDisplayName("ZIP") == .zip)
         #expect(ArchiveFormat.fromPickerDisplayName("GZ") == .tarGz)

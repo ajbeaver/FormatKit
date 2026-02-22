@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 
 enum ArchiveFormat: CaseIterable {
     case zip
@@ -125,107 +124,6 @@ enum ArchiveNameBuilder {
                 return candidate
             }
             attempt += 1
-        }
-    }
-}
-
-struct HandoffPayload: Codable {
-    let paths: [String]
-}
-
-enum HandoffPayloadStoreError: LocalizedError {
-    case invalidToken
-    case emptyPaths
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidToken:
-            return "The handoff token was invalid."
-        case .emptyPaths:
-            return "The handoff payload did not contain any selected items."
-        }
-    }
-}
-
-struct HandoffPayloadStore {
-    static let appGroupIdentifier = "group.com.ajbeaver.FormatKit"
-
-    private let fileManager: FileManager
-    private let appGroupIdentifierOverride: String?
-    private let fallbackBaseDirectory: URL?
-
-    init(
-        fileManager: FileManager = .default,
-        appGroupIdentifierOverride: String? = nil,
-        fallbackBaseDirectory: URL? = nil
-    ) {
-        self.fileManager = fileManager
-        self.appGroupIdentifierOverride = appGroupIdentifierOverride
-        self.fallbackBaseDirectory = fallbackBaseDirectory
-    }
-
-    func writePaths(_ paths: [String]) throws -> String {
-        guard !paths.isEmpty else { throw HandoffPayloadStoreError.emptyPaths }
-        let token = UUID().uuidString.lowercased()
-        let url = try payloadFileURL(for: token)
-        let data = try JSONEncoder().encode(HandoffPayload(paths: paths))
-        try ensureBaseDirectoryExists(for: url.deletingLastPathComponent())
-        try data.write(to: url, options: .atomic)
-        return token
-    }
-
-    func consumePaths(token: String) throws -> [String] {
-        let url = try payloadFileURL(for: token)
-        defer {
-            try? fileManager.removeItem(at: url)
-        }
-        let data = try Data(contentsOf: url)
-        let payload = try JSONDecoder().decode(HandoffPayload.self, from: data)
-        guard !payload.paths.isEmpty else { throw HandoffPayloadStoreError.emptyPaths }
-        return payload.paths
-    }
-
-    func payloadFileURL(for token: String) throws -> URL {
-        guard Self.isValidToken(token) else { throw HandoffPayloadStoreError.invalidToken }
-        let baseDirectory = try resolvedBaseDirectory()
-        return baseDirectory.appendingPathComponent("\(token).json", isDirectory: false)
-    }
-
-    func resolvedBaseDirectory() throws -> URL {
-        if let appGroupIdentifier = appGroupIdentifierOverride ?? Optional(Self.appGroupIdentifier),
-           let appGroupURL = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
-            return appGroupURL.appendingPathComponent("Handoffs", isDirectory: true)
-        }
-
-        if let fallbackBaseDirectory {
-            return fallbackBaseDirectory
-        }
-
-        let uid = getuid()
-        return URL(fileURLWithPath: "/tmp", isDirectory: true)
-            .appendingPathComponent("FormatKit-Handoffs-\(uid)", isDirectory: true)
-    }
-
-    private func ensureBaseDirectoryExists(for directory: URL) throws {
-        var isDirectory: ObjCBool = false
-        if fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory) {
-            if isDirectory.boolValue {
-                return
-            }
-            try fileManager.removeItem(at: directory)
-        }
-        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    }
-
-    private static func isValidToken(_ token: String) -> Bool {
-        guard !token.isEmpty else { return false }
-        return token.unicodeScalars.allSatisfy { scalar in
-            switch scalar {
-            case "a"..."z", "A"..."Z", "0"..."9", "-", "_":
-                return true
-            default:
-                return false
-            }
         }
     }
 }
