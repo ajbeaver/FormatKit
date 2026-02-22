@@ -1,17 +1,12 @@
-//
-//  FormatKitApp.swift
-//  FormatKit
-//
-//  Created by bea on 2/21/26.
-//
-
 import SwiftUI
 
 @main
 struct FormatKitApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        Settings {
+            EmptyView()
         }
     }
 }

@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		A10000072F4B000100000001 /* FormatKitFinderExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10000012F4B000100000001 /* FormatKitFinderExtension.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		171761072F4ACE6900DC1C99 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,12 +25,20 @@
 			remoteGlobalIDString = 171760F82F4ACE6900DC1C99;
 			remoteInfo = FormatKit;
 		};
+		A100000A2F4B000100000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 171760F12F4ACE6900DC1C99 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A10000082F4B000100000001;
+			remoteInfo = FormatKitFinderExtension;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		171760F92F4ACE6900DC1C99 /* FormatKit.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FormatKit.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		171761062F4ACE6900DC1C99 /* FormatKitTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FormatKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		171761102F4ACE6900DC1C99 /* FormatKitUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FormatKitUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A10000012F4B000100000001 /* FormatKitFinderExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FormatKitFinderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -45,7 +57,26 @@
 			path = FormatKitUITests;
 			sourceTree = "<group>";
 		};
+		A10000022F4B000100000001 /* FormatKitFinderExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FormatKitFinderExtension;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A10000062F4B000100000001 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A10000072F4B000100000001 /* FormatKitFinderExtension.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		171760F62F4ACE6900DC1C99 /* Frameworks */ = {
@@ -69,6 +100,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000032F4B000100000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -76,6 +114,7 @@
 			isa = PBXGroup;
 			children = (
 				171760FB2F4ACE6900DC1C99 /* FormatKit */,
+				A10000022F4B000100000001 /* FormatKitFinderExtension */,
 				171761092F4ACE6900DC1C99 /* FormatKitTests */,
 				171761132F4ACE6900DC1C99 /* FormatKitUITests */,
 				171760FA2F4ACE6900DC1C99 /* Products */,
@@ -86,6 +125,7 @@
 			isa = PBXGroup;
 			children = (
 				171760F92F4ACE6900DC1C99 /* FormatKit.app */,
+				A10000012F4B000100000001 /* FormatKitFinderExtension.appex */,
 				171761062F4ACE6900DC1C99 /* FormatKitTests.xctest */,
 				171761102F4ACE6900DC1C99 /* FormatKitUITests.xctest */,
 			);
@@ -102,10 +142,12 @@
 				171760F52F4ACE6900DC1C99 /* Sources */,
 				171760F62F4ACE6900DC1C99 /* Frameworks */,
 				171760F72F4ACE6900DC1C99 /* Resources */,
+				A10000062F4B000100000001 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				A10000092F4B000100000001 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				171760FB2F4ACE6900DC1C99 /* FormatKit */,
@@ -116,6 +158,28 @@
 			productName = FormatKit;
 			productReference = 171760F92F4ACE6900DC1C99 /* FormatKit.app */;
 			productType = "com.apple.product-type.application";
+		};
+		A10000082F4B000100000001 /* FormatKitFinderExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */;
+			buildPhases = (
+				A10000052F4B000100000001 /* Sources */,
+				A10000032F4B000100000001 /* Frameworks */,
+				A10000042F4B000100000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A10000022F4B000100000001 /* FormatKitFinderExtension */,
+			);
+			name = FormatKitFinderExtension;
+			packageProductDependencies = (
+			);
+			productName = FormatKitFinderExtension;
+			productReference = A10000012F4B000100000001 /* FormatKitFinderExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 		171761052F4ACE6900DC1C99 /* FormatKitTests */ = {
 			isa = PBXNativeTarget;
@@ -176,6 +240,9 @@
 					171760F82F4ACE6900DC1C99 = {
 						CreatedOnToolsVersion = 26.2;
 					};
+					A10000082F4B000100000001 = {
+						CreatedOnToolsVersion = 26.2;
+					};
 					171761052F4ACE6900DC1C99 = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = 171760F82F4ACE6900DC1C99;
@@ -201,6 +268,7 @@
 			projectRoot = "";
 			targets = (
 				171760F82F4ACE6900DC1C99 /* FormatKit */,
+				A10000082F4B000100000001 /* FormatKitFinderExtension */,
 				171761052F4ACE6900DC1C99 /* FormatKitTests */,
 				1717610F2F4ACE6900DC1C99 /* FormatKitUITests */,
 			);
@@ -223,6 +291,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		1717610E2F4ACE6900DC1C99 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A10000042F4B000100000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,9 +328,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A10000052F4B000100000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		A10000092F4B000100000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A10000082F4B000100000001 /* FormatKitFinderExtension */;
+			targetProxy = A100000A2F4B000100000001 /* PBXContainerItemProxy */;
+		};
 		171761082F4ACE6900DC1C99 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 171760F82F4ACE6900DC1C99 /* FormatKit */;
@@ -398,10 +485,9 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = QXB4YGYJBG;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -411,7 +497,6 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ajbeaver.FormatKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -430,10 +515,9 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = QXB4YGYJBG;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -443,7 +527,6 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ajbeaver.FormatKit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -533,6 +616,62 @@
 			};
 			name = Release;
 		};
+		A100000B2F4B000100000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = FormatKitFinderExtension/FormatKitFinderExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QXB4YGYJBG;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FormatKitFinderExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ajbeaver.FormatKit.FinderExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A100000C2F4B000100000001 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = FormatKitFinderExtension/FormatKitFinderExtension.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QXB4YGYJBG;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FormatKitFinderExtension/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ajbeaver.FormatKit.FinderExtension;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -550,6 +689,15 @@
 			buildConfigurations = (
 				1717611B2F4ACE6900DC1C99 /* Debug */,
 				1717611C2F4ACE6900DC1C99 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A100000D2F4B000100000001 /* Build configuration list for PBXNativeTarget "FormatKitFinderExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000B2F4B000100000001 /* Debug */,
+				A100000C2F4B000100000001 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
