@@ -55,9 +55,29 @@
 		A10000012F4B000100000001 /* FormatKitFinderExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = FormatKitFinderExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		1735AE742F4BBC9E001E867E /* Exceptions for "FormatKit" folder in "FormatKit" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 171760F82F4ACE6900DC1C99 /* FormatKit */;
+		};
+		1735AE752F4BBCAB001E867E /* Exceptions for "FormatKitFinderExtension" folder in "FormatKitFinderExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A10000082F4B000100000001 /* FormatKitFinderExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		171760FB2F4ACE6900DC1C99 /* FormatKit */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1735AE742F4BBC9E001E867E /* Exceptions for "FormatKit" folder in "FormatKit" target */,
+			);
 			path = FormatKit;
 			sourceTree = "<group>";
 		};
@@ -66,21 +86,24 @@
 			path = FormatKitTests;
 			sourceTree = "<group>";
 		};
-			171761132F4ACE6900DC1C99 /* FormatKitUITests */ = {
-				isa = PBXFileSystemSynchronizedRootGroup;
-				path = FormatKitUITests;
-				sourceTree = "<group>";
-			};
-			A10000102F4B000100000001 /* Shared */ = {
-				isa = PBXFileSystemSynchronizedRootGroup;
-				path = Shared;
-				sourceTree = "<group>";
-			};
-			A10000022F4B000100000001 /* FormatKitFinderExtension */ = {
-				isa = PBXFileSystemSynchronizedRootGroup;
-				path = FormatKitFinderExtension;
-				sourceTree = "<group>";
-			};
+		171761132F4ACE6900DC1C99 /* FormatKitUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = FormatKitUITests;
+			sourceTree = "<group>";
+		};
+		A10000022F4B000100000001 /* FormatKitFinderExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				1735AE752F4BBCAB001E867E /* Exceptions for "FormatKitFinderExtension" folder in "FormatKitFinderExtension" target */,
+			);
+			path = FormatKitFinderExtension;
+			sourceTree = "<group>";
+		};
+		A10000102F4B000100000001 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -117,13 +140,13 @@
 /* Begin PBXGroup section */
 		171760F02F4ACE6900DC1C99 = {
 			isa = PBXGroup;
-				children = (
-					171760FB2F4ACE6900DC1C99 /* FormatKit */,
-					A10000102F4B000100000001 /* Shared */,
-					A10000022F4B000100000001 /* FormatKitFinderExtension */,
-					171761092F4ACE6900DC1C99 /* FormatKitTests */,
-					171761132F4ACE6900DC1C99 /* FormatKitUITests */,
-					171760FA2F4ACE6900DC1C99 /* Products */,
+			children = (
+				171760FB2F4ACE6900DC1C99 /* FormatKit */,
+				A10000102F4B000100000001 /* Shared */,
+				A10000022F4B000100000001 /* FormatKitFinderExtension */,
+				171761092F4ACE6900DC1C99 /* FormatKitTests */,
+				171761132F4ACE6900DC1C99 /* FormatKitUITests */,
+				171760FA2F4ACE6900DC1C99 /* Products */,
 			);
 			sourceTree = "<group>";
 		};
@@ -155,10 +178,10 @@
 			dependencies = (
 				A10000092F4B000100000001 /* PBXTargetDependency */,
 			);
-				fileSystemSynchronizedGroups = (
-					171760FB2F4ACE6900DC1C99 /* FormatKit */,
-					A10000102F4B000100000001 /* Shared */,
-				);
+			fileSystemSynchronizedGroups = (
+				171760FB2F4ACE6900DC1C99 /* FormatKit */,
+				A10000102F4B000100000001 /* Shared */,
+			);
 			name = FormatKit;
 			packageProductDependencies = (
 			);
@@ -224,10 +247,10 @@
 			);
 			dependencies = (
 			);
-				fileSystemSynchronizedGroups = (
-					A10000102F4B000100000001 /* Shared */,
-					A10000022F4B000100000001 /* FormatKitFinderExtension */,
-				);
+			fileSystemSynchronizedGroups = (
+				A10000022F4B000100000001 /* FormatKitFinderExtension */,
+				A10000102F4B000100000001 /* Shared */,
+			);
 			name = FormatKitFinderExtension;
 			packageProductDependencies = (
 			);

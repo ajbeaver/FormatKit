@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 
 @MainActor
@@ -232,7 +232,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func validateVideoAssetPreflight(sourceURL: URL) throws {
         let asset = AVURLAsset(url: sourceURL)
-        let videoTracks = asset.tracks(withMediaType: .video)
+        let videoTracks = loadVideoTracksSync(from: asset)
         guard !videoTracks.isEmpty else {
             throw VideoPreflightError.noVideoTrack
         }
@@ -409,7 +409,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func runArchive(_ job: ArchiveJob) -> ArchiveRunResult {
+    nonisolated private static func runArchive(_ job: ArchiveJob) -> ArchiveRunResult {
         let process = Process()
         process.executableURL = job.format.executableURL
         process.currentDirectoryURL = job.workingDirectory
@@ -460,7 +460,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .success
     }
 
-    private static func runConversions(_ job: ConvertJob) -> ConvertRunResult {
+    nonisolated private static func runConversions(_ job: ConvertJob) -> ConvertRunResult {
         var outputURLs: [URL] = []
         for task in job.tasks {
             let singleResult = runSingleConversion(task)
@@ -474,7 +474,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .success(outputURLs)
     }
 
-    private static func runVideoConversion(_ job: VideoConvertJob) -> ConvertRunResult {
+    nonisolated private static func runVideoConversion(_ job: VideoConvertJob) -> ConvertRunResult {
         switch runSingleVideoConversion(job) {
         case .success(let outputURL):
             return .success([outputURL])
@@ -483,7 +483,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func runSingleVideoConversion(_ job: VideoConvertJob) -> ConvertSingleResult {
+    nonisolated private static func runSingleVideoConversion(_ job: VideoConvertJob) -> ConvertSingleResult {
         let asset = AVURLAsset(url: job.sourceURL)
         let presetName = videoExportPresetName(sourceURL: job.sourceURL, outputFormat: job.outputFormat)
 
@@ -507,18 +507,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        session.outputURL = job.outputURL
-        session.outputFileType = outputFileType
         session.shouldOptimizeForNetworkUse = false
 
-        let semaphore = DispatchSemaphore(value: 0)
-        session.exportAsynchronously {
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        switch session.status {
-        case .completed:
+        do {
+            try exportVideoSync(session: session, to: job.outputURL, as: outputFileType)
             guard isValidOutputFile(at: job.outputURL) else {
                 return .failure(
                     ConvertFailureDetails(
@@ -536,32 +528,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             }
             return .success(job.outputURL)
-        case .failed:
-            let message = session.error?.localizedDescription ?? "Unknown AVFoundation export error."
+        } catch {
+            let message = (error as NSError).localizedDescription
             return .failure(
                 ConvertFailureDetails(
                     userFacingMessage: "Failed to convert \(job.sourceURL.lastPathComponent).\n\n\(message)",
-                    diagnosticOutput: String(describing: session.error)
-                )
-            )
-        case .cancelled:
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "Conversion was cancelled for \(job.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "AVAssetExportSession cancelled"
-                )
-            )
-        default:
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "Conversion did not complete for \(job.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "Unexpected export status: \(session.status.rawValue), error: \(String(describing: session.error))"
+                    diagnosticOutput: String(describing: error)
                 )
             )
         }
     }
 
-    private static func runSingleConversion(_ task: ConvertTask) -> ConvertSingleResult {
+    nonisolated private static func runSingleConversion(_ task: ConvertTask) -> ConvertSingleResult {
         do {
             let inputFile = try AVAudioFile(forReading: task.sourceURL)
             let outputConfig = try makeOutputAudioConfiguration(for: task.outputFormat, sourceFile: inputFile)
@@ -695,14 +673,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func isValidOutputFile(at url: URL) -> Bool {
+    nonisolated private static func isValidOutputFile(at url: URL) -> Bool {
         let fileManager = FileManager.default
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return false }
         guard let fileSize = attributes[.size] as? NSNumber else { return false }
         return fileManager.fileExists(atPath: url.path) && fileSize.int64Value > 0
     }
 
-    private static func videoExportPresetName(sourceURL: URL, outputFormat: VideoOutputFormat) -> String {
+    nonisolated private static func videoExportPresetName(sourceURL: URL, outputFormat: VideoOutputFormat) -> String {
         let sourceContainer = videoContainerKind(for: sourceURL)
         let targetContainer = outputFormat.containerKind
         if sourceContainer == targetContainer {
@@ -711,7 +689,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return AVAssetExportPresetHighestQuality
     }
 
-    private static func videoContainerKind(for url: URL) -> VideoContainerKind? {
+    nonisolated private static func videoContainerKind(for url: URL) -> VideoContainerKind? {
         switch url.pathExtension.lowercased() {
         case "mp4", "m4v":
             return .mp4Family
@@ -722,11 +700,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func outputContainerMatchesSelection(outputURL: URL, expectedFormat: VideoOutputFormat) -> Bool {
+    nonisolated private static func outputContainerMatchesSelection(outputURL: URL, expectedFormat: VideoOutputFormat) -> Bool {
         outputURL.pathExtension.lowercased() == expectedFormat.fileExtension
     }
 
-    private static func availableVideoOutputFormats(for sourceURL: URL) -> [VideoOutputFormat] {
+    nonisolated private static func availableVideoOutputFormats(for sourceURL: URL) -> [VideoOutputFormat] {
         let asset = AVURLAsset(url: sourceURL)
         return VideoOutputFormat.allCases.filter { outputFormat in
             let presetName = videoExportPresetName(sourceURL: sourceURL, outputFormat: outputFormat)
@@ -737,11 +715,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private static func diagnosticSnippet(from text: String, maxLines: Int = 20) -> String {
+    nonisolated private static func diagnosticSnippet(from text: String, maxLines: Int = 20) -> String {
         text
             .split(whereSeparator: \.isNewline)
             .prefix(maxLines)
             .joined(separator: "\n")
+    }
+
+    private func loadVideoTracksSync(from asset: AVURLAsset) -> [AVAssetTrack] {
+        if #available(macOS 15.0, *) {
+            let resultBox = SyncResultBox<Result<[AVAssetTrack], Error>?>(nil)
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached {
+                do {
+                    let tracks = try await asset.loadTracks(withMediaType: .video)
+                    resultBox.value = .success(tracks)
+                } catch {
+                    resultBox.value = .failure(error)
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            switch resultBox.value {
+            case .success(let tracks):
+                return tracks
+            case .failure:
+                return []
+            case .none:
+                return []
+            }
+        } else {
+            return loadVideoTracksSyncLegacy(from: asset)
+        }
+    }
+
+    nonisolated private static func exportVideoSync(
+        session: AVAssetExportSession,
+        to outputURL: URL,
+        as outputFileType: AVFileType
+    ) throws {
+        if #available(macOS 15.0, *) {
+            let resultBox = SyncResultBox<Result<Void, Error>?>(nil)
+            let semaphore = DispatchSemaphore(value: 0)
+            Task.detached {
+                do {
+                    try await session.export(to: outputURL, as: outputFileType)
+                    resultBox.value = .success(())
+                } catch {
+                    resultBox.value = .failure(error)
+                }
+                semaphore.signal()
+            }
+            semaphore.wait()
+            switch resultBox.value {
+            case .success:
+                return
+            case .failure(let error):
+                throw error
+            case .none:
+                throw VideoExportError.noResult
+            }
+        } else {
+            try exportVideoSyncLegacy(session: session, to: outputURL, as: outputFileType)
+        }
+    }
+
+    @available(macOS, introduced: 11.0, deprecated: 15.0)
+    nonisolated private static func exportVideoSyncLegacy(
+        session: AVAssetExportSession,
+        to outputURL: URL,
+        as outputFileType: AVFileType
+    ) throws {
+        session.outputURL = outputURL
+        session.outputFileType = outputFileType
+        session.shouldOptimizeForNetworkUse = false
+
+        let semaphore = DispatchSemaphore(value: 0)
+        session.exportAsynchronously {
+            semaphore.signal()
+        }
+        semaphore.wait()
+
+        switch session.status {
+        case .completed:
+            return
+        case .failed:
+            throw session.error ?? VideoExportError.unknownFailure
+        case .cancelled:
+            throw VideoExportError.cancelled
+        default:
+            throw VideoExportError.unexpectedStatus(rawValue: session.status.rawValue, underlying: session.error)
+        }
+    }
+
+    @available(macOS, introduced: 11.0, deprecated: 15.0)
+    private func loadVideoTracksSyncLegacy(from asset: AVURLAsset) -> [AVAssetTrack] {
+        asset.tracks(withMediaType: .video)
     }
 }
 
@@ -766,6 +835,49 @@ private enum VideoPreflightError: LocalizedError {
         switch self {
         case .noVideoTrack:
             return "The selected file does not contain a video track."
+        }
+    }
+}
+
+private nonisolated enum VideoExportError: LocalizedError {
+    case cancelled
+    case unknownFailure
+    case noResult
+    case unexpectedStatus(rawValue: Int, underlying: Error?)
+
+    var errorDescription: String? {
+        switch self {
+        case .cancelled:
+            return "The operation was cancelled."
+        case .unknownFailure:
+            return "Unknown AVFoundation export error."
+        case .noResult:
+            return "The video export did not return a result."
+        case .unexpectedStatus:
+            return "Video export did not complete successfully."
+        }
+    }
+}
+
+// Narrow sync bridge for `Task.detached` results used only with a semaphore handoff.
+nonisolated private final class SyncResultBox<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: T
+
+    nonisolated init(_ initialValue: T) {
+        storage = initialValue
+    }
+
+    nonisolated(unsafe) var value: T {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+        set {
+            lock.lock()
+            storage = newValue
+            lock.unlock()
         }
     }
 }
@@ -841,13 +953,13 @@ private struct ConvertFailureDetails {
     let diagnosticOutput: String
 }
 
-private struct ConvertOutputAudioConfiguration {
+private nonisolated struct ConvertOutputAudioConfiguration {
     let fileSettings: [String: Any]
     let clientCommonFormat: AVAudioCommonFormat
     let clientInterleaved: Bool
 }
 
-private enum ConvertEngineError: LocalizedError {
+private nonisolated enum ConvertEngineError: LocalizedError {
     case unsupportedOutputFormat
     case invalidOutputConfiguration
     case converterInitializationFailed
@@ -876,7 +988,7 @@ private enum ConvertEngineError: LocalizedError {
     }
 }
 
-private enum VideoContainerKind {
+private nonisolated enum VideoContainerKind {
     case mp4Family
     case mov
 }
@@ -941,7 +1053,7 @@ private final class ArchivingProgressWindowController: NSWindowController {
     }
 }
 
-private func makeOutputAudioConfiguration(
+private nonisolated func makeOutputAudioConfiguration(
     for format: AudioOutputFormat,
     sourceFile: AVAudioFile
 ) throws -> ConvertOutputAudioConfiguration {
@@ -1007,7 +1119,7 @@ private func makeOutputAudioConfiguration(
 }
 
 private extension VideoOutputFormat {
-    var avFileType: AVFileType {
+    nonisolated var avFileType: AVFileType {
         switch self {
         case .mp4:
             return .mp4
@@ -1018,7 +1130,7 @@ private extension VideoOutputFormat {
         }
     }
 
-    var containerKind: VideoContainerKind {
+    nonisolated var containerKind: VideoContainerKind {
         switch self {
         case .mp4:
             return .mp4Family
