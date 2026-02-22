@@ -38,7 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !urls.isEmpty else { return }
 
         NSApp.activate(ignoringOtherApps: true)
-        let format = presentCompressModal()
+        let format = presentCompressModal(selectionCount: urls.count)
         guard let format else { return }
 
         compressionQueue.async { [urls] in
@@ -48,9 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func presentCompressModal() -> CompressionFormat? {
+    private func presentCompressModal(selectionCount: Int) -> CompressionFormat? {
+        let availableFormats = CompressionFormat.availableFormats(forSelectionCount: selectionCount)
+        guard !availableFormats.isEmpty else { return nil }
+
         let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
-        popup.addItems(withTitles: CompressionFormat.allCases.map(\.displayName))
+        popup.addItems(withTitles: availableFormats.map(\.displayName))
         popup.selectItem(at: 0)
 
         let alert = NSAlert()
@@ -65,48 +68,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard response == .alertFirstButtonReturn else { return nil }
 
         let selectedIndex = popup.indexOfSelectedItem
-        let formats = CompressionFormat.allCases
-        guard formats.indices.contains(selectedIndex) else { return .zip }
-        return formats[selectedIndex]
+        guard availableFormats.indices.contains(selectedIndex) else { return .zip }
+        return availableFormats[selectedIndex]
     }
 
     private static func compressItem(at url: URL, format: CompressionFormat) {
         let fileManager = FileManager.default
         let parentDirectory = url.deletingLastPathComponent()
         let itemName = url.lastPathComponent
-        let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
-
         let process = Process()
         process.currentDirectoryURL = parentDirectory
         process.standardOutput = nil
         process.standardError = nil
+        var rawPlan: RawCompressionPlan?
 
         switch format {
         case .zip:
+            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
             process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
             process.arguments = ["-r", outputURL.lastPathComponent, itemName]
         case .tarGz:
+            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
             process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
             process.arguments = ["-czf", outputURL.lastPathComponent, itemName]
+        case .tarBz2:
+            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            process.arguments = ["-cjf", outputURL.lastPathComponent, itemName]
+        case .tarXz:
+            let outputURL = uniqueOutputURL(nextTo: url, format: format, fileManager: fileManager)
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+            process.arguments = ["-cJf", outputURL.lastPathComponent, itemName]
+        case .gz, .bz2, .xz:
+            rawPlan = configureRawCompressionProcess(
+                process,
+                sourceURL: url,
+                format: format,
+                fileManager: fileManager
+            )
         }
 
         do {
             try process.run()
             process.waitUntilExit()
+            cleanupRawCompressionTempLinkIfNeeded(rawPlan, fileManager: fileManager)
         } catch {
+            cleanupRawCompressionTempLinkIfNeeded(rawPlan, fileManager: fileManager)
             // Minimal v1: fail silently and return.
         }
     }
 
     private static func uniqueOutputURL(nextTo url: URL, format: CompressionFormat, fileManager: FileManager) -> URL {
         let parentDirectory = url.deletingLastPathComponent()
-        let baseName = url.deletingPathExtension().lastPathComponent
-        let stem = baseName.isEmpty ? url.lastPathComponent : baseName
+        let stem: String
+        if format.isTarContainer {
+            let baseName = url.deletingPathExtension().lastPathComponent
+            stem = baseName.isEmpty ? url.lastPathComponent : baseName
+        } else {
+            stem = url.lastPathComponent
+        }
         let archiveSuffix = format.archiveSuffix
 
         var attempt = 0
         while true {
-            let suffix = attempt == 0 ? "" : " \(attempt + 1)"
+            let suffix: String
+            if attempt == 0 {
+                suffix = ""
+            } else if format.isRawCompression {
+                suffix = "_\(attempt)"
+            } else {
+                suffix = " \(attempt + 1)"
+            }
             let filename = "\(stem)\(suffix)\(archiveSuffix)"
             let candidate = parentDirectory.appendingPathComponent(filename)
             if !fileManager.fileExists(atPath: candidate.path) {
@@ -115,16 +147,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             attempt += 1
         }
     }
+
+    private static func configureRawCompressionProcess(
+        _ process: Process,
+        sourceURL: URL,
+        format: CompressionFormat,
+        fileManager: FileManager
+    ) -> RawCompressionPlan {
+        let outputURL = uniqueOutputURL(nextTo: sourceURL, format: format, fileManager: fileManager)
+        let defaultOutputURL = sourceURL.appendingPathExtension(format.rawCompressionExtension)
+
+        if outputURL.path == defaultOutputURL.path {
+            process.executableURL = format.executableURL
+            process.arguments = ["-k", sourceURL.lastPathComponent]
+            return RawCompressionPlan(tempLinkURL: nil)
+        }
+
+        let tempLinkURL = outputURL.deletingPathExtension()
+        try? fileManager.removeItem(at: tempLinkURL)
+        do {
+            try fileManager.linkItem(at: sourceURL, to: tempLinkURL)
+            process.executableURL = format.executableURL
+            process.arguments = ["-k", tempLinkURL.lastPathComponent]
+            return RawCompressionPlan(tempLinkURL: tempLinkURL)
+        } catch {
+            do {
+                try fileManager.copyItem(at: sourceURL, to: tempLinkURL)
+                process.executableURL = format.executableURL
+                process.arguments = ["-k", tempLinkURL.lastPathComponent]
+                return RawCompressionPlan(tempLinkURL: tempLinkURL)
+            } catch {
+                process.executableURL = format.executableURL
+                process.arguments = ["-k", sourceURL.lastPathComponent]
+                return RawCompressionPlan(tempLinkURL: nil)
+            }
+        }
+    }
+
+    private static func cleanupRawCompressionTempLinkIfNeeded(
+        _ plan: RawCompressionPlan?,
+        fileManager: FileManager
+    ) {
+        guard let tempLinkURL = plan?.tempLinkURL else { return }
+        try? fileManager.removeItem(at: tempLinkURL)
+    }
 }
 
 private enum CompressionFormat: CaseIterable {
     case zip
     case tarGz
+    case tarBz2
+    case tarXz
+    case gz
+    case bz2
+    case xz
 
     var displayName: String {
         switch self {
         case .zip: return "ZIP"
         case .tarGz: return "TAR.GZ"
+        case .tarBz2: return "TAR.BZ2"
+        case .tarXz: return "TAR.XZ"
+        case .gz: return "GZ"
+        case .bz2: return "BZ2"
+        case .xz: return "XZ"
         }
     }
 
@@ -132,6 +218,65 @@ private enum CompressionFormat: CaseIterable {
         switch self {
         case .zip: return ".zip"
         case .tarGz: return ".tar.gz"
+        case .tarBz2: return ".tar.bz2"
+        case .tarXz: return ".tar.xz"
+        case .gz: return ".gz"
+        case .bz2: return ".bz2"
+        case .xz: return ".xz"
         }
     }
+
+    var isTarContainer: Bool {
+        switch self {
+        case .tarGz, .tarBz2, .tarXz:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var isRawCompression: Bool {
+        switch self {
+        case .gz, .bz2, .xz:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var rawCompressionExtension: String {
+        switch self {
+        case .gz: return "gz"
+        case .bz2: return "bz2"
+        case .xz: return "xz"
+        default: return ""
+        }
+    }
+
+    var executableURL: URL {
+        switch self {
+        case .gz:
+            return URL(fileURLWithPath: "/usr/bin/gzip")
+        case .bz2:
+            return URL(fileURLWithPath: "/usr/bin/bzip2")
+        case .xz:
+            return URL(fileURLWithPath: "/usr/bin/xz")
+        case .zip:
+            return URL(fileURLWithPath: "/usr/bin/zip")
+        case .tarGz, .tarBz2, .tarXz:
+            return URL(fileURLWithPath: "/usr/bin/tar")
+        }
+    }
+
+    static func availableFormats(forSelectionCount count: Int) -> [CompressionFormat] {
+        let multiFileFormats: [CompressionFormat] = [.zip, .tarGz, .tarBz2, .tarXz]
+        if count == 1 {
+            return multiFileFormats + [.gz, .bz2, .xz]
+        }
+        return multiFileFormats
+    }
+}
+
+private struct RawCompressionPlan {
+    let tempLinkURL: URL?
 }

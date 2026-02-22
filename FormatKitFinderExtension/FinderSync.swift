@@ -18,7 +18,7 @@ final class FinderSync: FIFinderSync {
         guard !urls.contains(where: Self.isArchiveURL) else { return nil }
 
         let menu = NSMenu(title: "")
-        let item = NSMenuItem(title: "Archive…", action: #selector(handleArchive(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: "archive", action: #selector(handleArchive(_:)), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
         return menu
