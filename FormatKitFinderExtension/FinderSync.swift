@@ -15,24 +15,24 @@ final class FinderSync: FIFinderSync {
 
         let urls = selectedFileURLs()
         guard !urls.isEmpty else { return nil }
-
-        _ = classifySelection(urls)
+        guard !urls.contains(where: Self.isArchiveURL) else { return nil }
 
         let menu = NSMenu(title: "")
-        let item = NSMenuItem(title: "Compress…", action: #selector(handleCompress(_:)), keyEquivalent: "")
+        let item = NSMenuItem(title: "Archive…", action: #selector(handleArchive(_:)), keyEquivalent: "")
         item.target = self
         menu.addItem(item)
         return menu
     }
 
-    @objc private func handleCompress(_ sender: Any?) {
+    @objc private func handleArchive(_ sender: Any?) {
         let urls = selectedFileURLs()
         guard !urls.isEmpty else { return }
+        guard !urls.contains(where: Self.isArchiveURL) else { return }
 
         let paths = urls.map(\.path)
         guard
             let jsonData = try? JSONEncoder().encode(paths),
-            let components = compressURLComponents(withBase64Paths: jsonData.base64EncodedString()),
+            let components = archiveURLComponents(withBase64Paths: jsonData.base64EncodedString()),
             let url = components.url
         else {
             return
@@ -45,35 +45,18 @@ final class FinderSync: FIFinderSync {
         (controller.selectedItemURLs() ?? []).filter(\.isFileURL)
     }
 
-    private func classifySelection(_ urls: [URL]) -> SelectionKind {
-        let hasArchive = urls.contains { Self.isArchiveURL($0) }
-        let hasNonArchive = urls.contains { !Self.isArchiveURL($0) }
-
-        switch (hasArchive, hasNonArchive) {
-        case (false, true): return .onlyNonArchives
-        case (true, true): return .mixed
-        case (true, false): return .onlyArchives
-        default: return .empty
-        }
-    }
-
     private static func isArchiveURL(_ url: URL) -> Bool {
-        let lowercased = url.lastPathComponent.lowercased()
-        return lowercased.hasSuffix(".zip") || lowercased.hasSuffix(".tar.gz") || lowercased.hasSuffix(".tgz")
+        let lowercasedName = url.lastPathComponent.lowercased()
+        // Hide the menu for known archive suffixes so the v1 Archive action only appears on non-archives.
+        let archiveSuffixes = [".zip", ".tar", ".tar.gz", ".tgz", ".gz", ".bz2", ".xz"]
+        return archiveSuffixes.contains { lowercasedName.hasSuffix($0) }
     }
 
-    private func compressURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
+    private func archiveURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
         var components = URLComponents()
         components.scheme = "formatkit"
-        components.host = "compress"
+        components.host = "archive"
         components.queryItems = [URLQueryItem(name: "paths", value: encodedPaths)]
         return components
     }
-}
-
-private enum SelectionKind {
-    case empty
-    case onlyNonArchives
-    case mixed
-    case onlyArchives
 }

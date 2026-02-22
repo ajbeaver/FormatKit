@@ -25,7 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             url.scheme?.lowercased() == "formatkit",
             let action = url.host?.lowercased(),
-            action == "compress",
+            action == "archive",
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
             let encodedPaths = components.queryItems?.first(where: { $0.name == "paths" })?.value,
             let data = Data(base64Encoded: encodedPaths),
@@ -55,10 +55,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = "Compress"
+        alert.messageText = "Archive"
         alert.informativeText = ""
         alert.accessoryView = popup
-        alert.addButton(withTitle: "Compress")
+        alert.addButton(withTitle: "Archive")
         alert.addButton(withTitle: "Cancel")
 
         let response = alert.runModal()
