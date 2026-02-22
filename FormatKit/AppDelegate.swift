@@ -465,9 +465,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let pendingReadError {
                     throw pendingReadError
                 }
-                if let conversionError {
-                    throw conversionError
-                }
 
                 if outputBuffer.frameLength > 0 {
                     try outputFile.write(from: outputBuffer)
@@ -487,12 +484,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     return .success(task.outputURL)
                 case .error:
+                    if let conversionError {
+                        throw conversionError
+                    }
                     throw ConvertEngineError.conversionFailedWithoutUnderlyingError
                 @unknown default:
+                    if let conversionError {
+                        throw conversionError
+                    }
                     throw ConvertEngineError.unexpectedConverterStatus
                 }
             }
         } catch {
+            // AVAudioConverter may surface a terminal bridged NSError after writing valid output.
+            // Prefer the observable result (a non-empty output file) over the terminal status in that case.
+            if isValidOutputFile(at: task.outputURL) {
+                return .success(task.outputURL)
+            }
             return .failure(
                 ConvertFailureDetails(
                     userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\n\(error.localizedDescription)",
