@@ -119,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
-        let allowedFormats = AudioConversionMatrix.allowedOutputs(for: inputFormats)
+        let allowedFormats = AudioConversionMatrix.allowedOutputs(for: inputFormats).filter { $0 != .mp3 }
         guard !allowedFormats.isEmpty else {
             presentErrorAndMaybeTerminate(
                 title: "Invalid Selection",
@@ -377,79 +377,126 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private static func runSingleConversion(_ task: ConvertTask) -> ConvertSingleResult {
-        let asset = AVURLAsset(url: task.sourceURL)
-        let presetName = task.outputFormat.exportPresetName
-        let compatiblePresets = AVAssetExportSession.exportPresets(compatibleWith: asset)
-        guard compatiblePresets.contains(presetName) else {
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "This file cannot be converted to \(task.outputFormat.displayName) on this system.",
-                    diagnosticOutput: "Missing compatible preset \(presetName) for \(task.sourceURL.path)"
-                )
+        do {
+            let inputFile = try AVAudioFile(forReading: task.sourceURL)
+            let outputConfig = try makeOutputAudioConfiguration(for: task.outputFormat, sourceFile: inputFile)
+
+            let outputFile = try AVAudioFile(
+                forWriting: task.outputURL,
+                settings: outputConfig.fileSettings,
+                commonFormat: outputConfig.clientCommonFormat,
+                interleaved: outputConfig.clientInterleaved
             )
-        }
 
-        guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "Failed to create a conversion session for \(task.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "AVAssetExportSession init returned nil"
-                )
-            )
-        }
-
-        let fileType = task.outputFormat.avFileType
-        guard session.supportedFileTypes.contains(fileType) else {
-            let supportedTypesDescription = session.supportedFileTypes.map(\.rawValue).joined(separator: ", ")
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "The selected output format is not supported for \(task.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "Unsupported file type \(fileType.rawValue); supported: \(supportedTypesDescription)"
-                )
-            )
-        }
-
-        session.outputURL = task.outputURL
-        session.outputFileType = fileType
-        session.shouldOptimizeForNetworkUse = false
-
-        let semaphore = DispatchSemaphore(value: 0)
-        session.exportAsynchronously {
-            semaphore.signal()
-        }
-        semaphore.wait()
-
-        switch session.status {
-        case .completed:
-            guard isValidOutputFile(at: task.outputURL) else {
-                return .failure(
-                    ConvertFailureDetails(
-                        userFacingMessage: "Convert finished, but the output file was missing or empty.",
-                        diagnosticOutput: task.outputURL.path
-                    )
-                )
+            guard let converter = AVAudioConverter(from: inputFile.processingFormat, to: outputFile.processingFormat) else {
+                throw ConvertEngineError.converterInitializationFailed
             }
-            return .success(task.outputURL)
-        case .failed:
-            let message = session.error?.localizedDescription ?? "Unknown AVFoundation export error."
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\n\(message)",
-                    diagnosticOutput: String(describing: session.error)
-                )
+
+            let inputFrameCapacity: AVAudioFrameCount = 4096
+            guard let inputBuffer = AVAudioPCMBuffer(
+                pcmFormat: inputFile.processingFormat,
+                frameCapacity: inputFrameCapacity
+            ) else {
+                throw ConvertEngineError.inputBufferAllocationFailed
+            }
+
+            let sampleRateRatio: Double
+            if inputFile.processingFormat.sampleRate > 0 {
+                sampleRateRatio = outputFile.processingFormat.sampleRate / inputFile.processingFormat.sampleRate
+            } else {
+                sampleRateRatio = 1
+            }
+            let estimatedOutputCapacity = max(
+                Int(inputFrameCapacity),
+                Int((Double(inputFrameCapacity) * max(sampleRateRatio, 1)) + 1024)
             )
-        case .cancelled:
+
+            guard let outputBuffer = AVAudioPCMBuffer(
+                pcmFormat: outputFile.processingFormat,
+                frameCapacity: AVAudioFrameCount(estimatedOutputCapacity)
+            ) else {
+                throw ConvertEngineError.outputBufferAllocationFailed
+            }
+
+            var reachedEOF = false
+            var pendingReadError: Error?
+
+            while true {
+                outputBuffer.frameLength = 0
+                var inputProvidedForThisCall = false
+                var conversionError: NSError?
+
+                let status = converter.convert(to: outputBuffer, error: &conversionError) { _, outStatus in
+                    if let _ = pendingReadError {
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+
+                    if reachedEOF {
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+
+                    if inputProvidedForThisCall {
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+
+                    do {
+                        inputBuffer.frameLength = 0
+                        try inputFile.read(into: inputBuffer, frameCount: inputFrameCapacity)
+                    } catch {
+                        pendingReadError = error
+                        outStatus.pointee = .noDataNow
+                        return nil
+                    }
+
+                    if inputBuffer.frameLength == 0 {
+                        reachedEOF = true
+                        outStatus.pointee = .endOfStream
+                        return nil
+                    }
+
+                    inputProvidedForThisCall = true
+                    outStatus.pointee = .haveData
+                    return inputBuffer
+                }
+
+                if let pendingReadError {
+                    throw pendingReadError
+                }
+                if let conversionError {
+                    throw conversionError
+                }
+
+                if outputBuffer.frameLength > 0 {
+                    try outputFile.write(from: outputBuffer)
+                }
+
+                switch status {
+                case .haveData, .inputRanDry:
+                    continue
+                case .endOfStream:
+                    guard isValidOutputFile(at: task.outputURL) else {
+                        return .failure(
+                            ConvertFailureDetails(
+                                userFacingMessage: "Convert finished, but the output file was missing or empty.",
+                                diagnosticOutput: task.outputURL.path
+                            )
+                        )
+                    }
+                    return .success(task.outputURL)
+                case .error:
+                    throw ConvertEngineError.conversionFailedWithoutUnderlyingError
+                @unknown default:
+                    throw ConvertEngineError.unexpectedConverterStatus
+                }
+            }
+        } catch {
             return .failure(
                 ConvertFailureDetails(
-                    userFacingMessage: "Conversion was cancelled for \(task.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "AVAssetExportSession cancelled"
-                )
-            )
-        default:
-            return .failure(
-                ConvertFailureDetails(
-                    userFacingMessage: "Conversion did not complete for \(task.sourceURL.lastPathComponent).",
-                    diagnosticOutput: "Unexpected export status: \(session.status.rawValue)"
+                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\n\(error.localizedDescription)",
+                    diagnosticOutput: String(describing: error)
                 )
             )
         }
@@ -543,6 +590,41 @@ private struct ConvertFailureDetails {
     let diagnosticOutput: String
 }
 
+private struct ConvertOutputAudioConfiguration {
+    let fileSettings: [String: Any]
+    let clientCommonFormat: AVAudioCommonFormat
+    let clientInterleaved: Bool
+}
+
+private enum ConvertEngineError: LocalizedError {
+    case unsupportedOutputFormat
+    case invalidOutputConfiguration
+    case converterInitializationFailed
+    case inputBufferAllocationFailed
+    case outputBufferAllocationFailed
+    case conversionFailedWithoutUnderlyingError
+    case unexpectedConverterStatus
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedOutputFormat:
+            return "The selected output format is not supported."
+        case .invalidOutputConfiguration:
+            return "Could not build audio output settings."
+        case .converterInitializationFailed:
+            return "Could not initialize the audio converter."
+        case .inputBufferAllocationFailed:
+            return "Could not allocate the input audio buffer."
+        case .outputBufferAllocationFailed:
+            return "Could not allocate the output audio buffer."
+        case .conversionFailedWithoutUnderlyingError:
+            return "Audio conversion failed."
+        case .unexpectedConverterStatus:
+            return "Audio conversion returned an unexpected status."
+        }
+    }
+}
+
 private final class ArchivingProgressWindowController: NSWindowController {
     private let statusLabel: NSTextField
 
@@ -603,26 +685,67 @@ private final class ArchivingProgressWindowController: NSWindowController {
     }
 }
 
-private extension AudioOutputFormat {
-    var avFileType: AVFileType {
-        switch self {
-        case .mp3:
-            return .mp3
-        case .m4a:
-            return .m4a
-        case .wav:
-            return .wav
-        case .aiff:
-            return .aiff
-        }
-    }
+private func makeOutputAudioConfiguration(
+    for format: AudioOutputFormat,
+    sourceFile: AVAudioFile
+) throws -> ConvertOutputAudioConfiguration {
+    let sourceFormat = sourceFile.processingFormat
+    let sourceChannelCount = max(1, Int(sourceFormat.channelCount))
+    let sourceSampleRate = sourceFormat.sampleRate > 0 ? sourceFormat.sampleRate : 44_100
 
-    var exportPresetName: String {
-        switch self {
-        case .m4a:
-            return AVAssetExportPresetAppleM4A
-        case .mp3, .wav, .aiff:
-            return AVAssetExportPresetHighestQuality
+    switch format {
+    case .m4a:
+        let fileSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sourceSampleRate,
+            AVNumberOfChannelsKey: sourceChannelCount,
+            AVEncoderBitRateKey: 192_000
+        ]
+        guard AVAudioFormat(settings: fileSettings) != nil else {
+            throw ConvertEngineError.invalidOutputConfiguration
         }
+        return ConvertOutputAudioConfiguration(
+            fileSettings: fileSettings,
+            clientCommonFormat: .pcmFormatFloat32,
+            clientInterleaved: false
+        )
+    case .wav:
+        let fileSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sourceSampleRate,
+            AVNumberOfChannelsKey: sourceChannelCount,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        guard AVAudioFormat(settings: fileSettings) != nil else {
+            throw ConvertEngineError.invalidOutputConfiguration
+        }
+        return ConvertOutputAudioConfiguration(
+            fileSettings: fileSettings,
+            clientCommonFormat: .pcmFormatInt16,
+            clientInterleaved: true
+        )
+    case .aiff:
+        let fileSettings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: sourceSampleRate,
+            AVNumberOfChannelsKey: sourceChannelCount,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: true,
+            AVLinearPCMIsNonInterleaved: false
+        ]
+        guard AVAudioFormat(settings: fileSettings) != nil else {
+            throw ConvertEngineError.invalidOutputConfiguration
+        }
+        return ConvertOutputAudioConfiguration(
+            fileSettings: fileSettings,
+            clientCommonFormat: .pcmFormatInt16,
+            clientInterleaved: true
+        )
+    case .mp3:
+        throw ConvertEngineError.unsupportedOutputFormat
     }
 }
