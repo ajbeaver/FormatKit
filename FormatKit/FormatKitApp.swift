@@ -9,9 +9,9 @@ struct FormatKitApp: App {
             EmptyView()
         }
         .commands {
-            CommandGroup(after: .appInfo) {
-                Button("Enable Finder Extension…") {
-                    AppDelegate.openFinderExtensionSettings()
+            CommandGroup(after: .newItem) {
+                Button("Enable Extension") {
+                    appDelegate.presentExtensionOnboardingWindow()
                 }
             }
         }

@@ -1,14 +1,20 @@
 import AppKit
 @preconcurrency import AVFoundation
+import FinderSync
 import Foundation
+import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
+    private var extensionOnboardingWindowController: ExtensionOnboardingWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if !Self.isFinderExtensionEnabled {
+            presentExtensionOnboardingWindow()
+        }
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -16,11 +22,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         handleIncomingURL(firstURL)
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag, !Self.isFinderExtensionEnabled else { return false }
+        presentExtensionOnboardingWindow()
+        return false
+    }
+
+    func presentExtensionOnboardingWindow() {
+        if extensionOnboardingWindowController == nil {
+            extensionOnboardingWindowController = ExtensionOnboardingWindowController()
+        }
+        extensionOnboardingWindowController?.show()
+    }
+
     static func openFinderExtensionSettings() {
+        if #available(macOS 10.14, *) {
+            FIFinderSyncController.showExtensionManagementInterface()
+            return
+        }
+
         guard let url = URL(string: "x-apple.systempreferences:com.apple.Extensions-Settings.extension") else {
             return
         }
         NSWorkspace.shared.open(url)
+    }
+
+    static func copyRestartFinderCommand() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString("killall Finder", forType: .string)
+    }
+
+    private static var isFinderExtensionEnabled: Bool {
+        if #available(macOS 10.14, *) {
+            return FIFinderSyncController.isExtensionEnabled
+        }
+        return false
     }
 
     private func handleIncomingURL(_ url: URL) {
@@ -811,6 +848,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @available(macOS, introduced: 11.0, deprecated: 15.0)
     private func loadVideoTracksSyncLegacy(from asset: AVURLAsset) -> [AVAssetTrack] {
         asset.tracks(withMediaType: .video)
+    }
+}
+
+private struct AppBundleMetadata {
+    let appName: String
+    let versionDescription: String
+
+    static var current: AppBundleMetadata {
+        let bundle = Bundle.main
+        let appName =
+            (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? (bundle.object(forInfoDictionaryKey: kCFBundleNameKey as String) as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? ProcessInfo.processInfo.processName
+
+        let shortVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0"
+        let buildVersion = (bundle.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String) ?? "1"
+        let versionDescription: String
+        if buildVersion == shortVersion {
+            versionDescription = "Version \(shortVersion)"
+        } else {
+            versionDescription = "Version \(shortVersion) (\(buildVersion))"
+        }
+
+        return AppBundleMetadata(appName: appName.isEmpty ? "FormatKit" : appName, versionDescription: versionDescription)
+    }
+}
+
+private struct ExtensionOnboardingView: View {
+    private let metadata = AppBundleMetadata.current
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(metadata.appName)
+                .font(.system(size: 24, weight: .semibold))
+
+            Text(metadata.versionDescription)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            Text("Right-click files in Finder to archive or convert them with FormatKit.")
+            Text("Enable the Finder extension once, then the menu appears inside Finder.")
+                .foregroundStyle(.secondary)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Enable Finder Extension")
+                    .font(.headline)
+                Text("System Settings → Privacy & Security → Extensions → Finder Extensions → enable FormatKit")
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Extensions Settings") {
+                    AppDelegate.openFinderExtensionSettings()
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("If you just enabled it, restart Finder.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 8)
+                Text("killall Finder")
+                    .font(.system(.footnote, design: .monospaced))
+                Button("Copy Command") {
+                    AppDelegate.copyRestartFinderCommand()
+                }
+                .controlSize(.small)
+            }
+
+            Text("Usage: Right-click a file in Finder → Archive or Convert")
+                .font(.footnote)
+        }
+        .padding(20)
+        .frame(width: 560)
+    }
+}
+
+private final class ExtensionOnboardingWindowController: NSWindowController {
+    init() {
+        let hostingController = NSHostingController(rootView: ExtensionOnboardingView())
+        let window = NSWindow(
+            contentViewController: hostingController
+        )
+        window.title = AppBundleMetadata.current.appName
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.setContentSize(NSSize(width: 560, height: 330))
+        window.center()
+
+        super.init(window: window)
+        shouldCascadeWindows = false
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func show() {
+        guard let window else { return }
+        if !window.isVisible {
+            window.center()
+        }
+        showWindow(nil)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 }
 
