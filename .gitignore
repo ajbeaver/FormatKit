@@ -1,0 +1,26 @@
+# macOS
+.DS_Store
+
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+
+# Archives
+*.xcarchive
+
+# Swift Package Manager
+.build/
+
+# Finder test junk
+Test/
+*.mov
+*.mp4
+*.m4a
+*.wav
+*.png
+*.jpg
+
+# draw.io
+*.drawio
