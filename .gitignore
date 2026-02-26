@@ -24,3 +24,6 @@ Test/
 
 # draw.io
 *.drawio
+
+# logs
+*.log
