@@ -37,7 +37,7 @@ enum ArchiveFormat: CaseIterable {
     nonisolated func processArguments(outputFileName: String, relativeItemNames: [String]) -> [String] {
         switch self {
         case .zip:
-            return ["-r", outputFileName] + relativeItemNames
+            return ["-q", "-r", outputFileName] + relativeItemNames
         case .tarGz:
             return ["-czf", outputFileName] + relativeItemNames
         case .tarXz:

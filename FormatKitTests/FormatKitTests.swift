@@ -61,7 +61,7 @@ struct FormatKitTests {
 
         #expect(ArchiveFormat.tarGz.processArguments(outputFileName: "a.tar.gz", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-czf", "a.tar.gz"]))
         #expect(ArchiveFormat.tarXz.processArguments(outputFileName: "a.tar.xz", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-cJf", "a.tar.xz"]))
-        #expect(ArchiveFormat.zip.processArguments(outputFileName: "a.zip", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-r", "a.zip"]))
+        #expect(ArchiveFormat.zip.processArguments(outputFileName: "a.zip", relativeItemNames: ["foo"]).prefix(3).elementsEqual(["-q", "-r", "a.zip"]))
     }
 
     @Test func audioDetectionGatingOnlyAcceptsSupportedAudioExtensions() {

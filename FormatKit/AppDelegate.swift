@@ -457,10 +457,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             relativeItemNames: job.relativeItemNames
         )
 
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
 
         do {
             try process.run()
@@ -474,8 +472,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let stdout = String(data: stdoutPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let stderr = String(data: stderrPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        let stdout = ""
+        let stderr = ""
         let combinedDiagnostics = [stderr, stdout]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
