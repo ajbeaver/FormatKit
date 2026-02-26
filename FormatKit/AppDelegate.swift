@@ -9,30 +9,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
-    private var extensionOnboardingWindowController: ExtensionOnboardingWindowController?
+    private var settingsWindowController: SettingsWindowController?
+    private var didReceiveOpenRequest = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        if !Self.isFinderExtensionEnabled {
-            presentExtensionOnboardingWindow()
+        if Self.isFinderExtensionEnabled {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.didReceiveOpenRequest else { return }
+                NSApp.terminate(nil)
+            }
+            return
         }
+
+        presentSettingsWindow()
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        didReceiveOpenRequest = true
         guard let firstURL = urls.first else { return }
         handleIncomingURL(firstURL)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard !flag, !Self.isFinderExtensionEnabled else { return false }
-        presentExtensionOnboardingWindow()
+        presentSettingsWindow()
         return false
     }
 
-    func presentExtensionOnboardingWindow() {
-        if extensionOnboardingWindowController == nil {
-            extensionOnboardingWindowController = ExtensionOnboardingWindowController()
+    func presentSettingsWindow() {
+        if settingsWindowController == nil {
+            settingsWindowController = SettingsWindowController()
         }
-        extensionOnboardingWindowController?.show()
+        settingsWindowController?.show()
     }
 
     static func openFinderExtensionSettings() {
@@ -45,12 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         NSWorkspace.shared.open(url)
-    }
-
-    static func copyRestartFinderCommand() {
-        let pasteboard = NSPasteboard.general
-        pasteboard.clearContents()
-        pasteboard.setString("killall Finder", forType: .string)
     }
 
     private static var isFinderExtensionEnabled: Bool {
@@ -853,7 +855,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private struct AppBundleMetadata {
     let appName: String
-    let versionDescription: String
+    let shortVersion: String
 
     static var current: AppBundleMetadata {
         let bundle = Bundle.main
@@ -863,78 +865,66 @@ private struct AppBundleMetadata {
             ?? ProcessInfo.processInfo.processName
 
         let shortVersion = (bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.0"
-        let buildVersion = (bundle.object(forInfoDictionaryKey: kCFBundleVersionKey as String) as? String) ?? "1"
-        let versionDescription: String
-        if buildVersion == shortVersion {
-            versionDescription = "Version \(shortVersion)"
-        } else {
-            versionDescription = "Version \(shortVersion) (\(buildVersion))"
-        }
 
-        return AppBundleMetadata(appName: appName.isEmpty ? "FormatKit" : appName, versionDescription: versionDescription)
+        return AppBundleMetadata(
+            appName: appName.isEmpty ? "FormatKit" : appName,
+            shortVersion: shortVersion
+        )
     }
 }
 
-private struct ExtensionOnboardingView: View {
+private struct SettingsActivationView: View {
     private let metadata = AppBundleMetadata.current
+    private let privacyPolicyURL = URL(string: "https://github.com/ajbeaver/FormatKit#readme")!
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             Text(metadata.appName)
-                .font(.system(size: 24, weight: .semibold))
+                .font(.system(size: 26, weight: .semibold))
 
-            Text(metadata.versionDescription)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Right-click files in Finder to archive or convert them.")
+                Text("Enable the Finder extension to use FormatKit in Finder.")
+                    .foregroundStyle(.secondary)
+            }
 
-            Text("Right-click files in Finder to archive or convert them with FormatKit.")
-            Text("Enable the Finder extension once, then the menu appears inside Finder.")
-                .foregroundStyle(.secondary)
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Enable Finder Extension")
-                    .font(.headline)
-                Text("System Settings → Privacy & Security → Extensions → Finder Extensions → enable FormatKit")
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Open Extensions Settings") {
+            HStack(spacing: 10) {
+                Button("Enable Finder Extension") {
                     AppDelegate.openFinderExtensionSettings()
                 }
-            }
-            .padding(12)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .keyboardShortcut(.defaultAction)
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text("If you just enabled it, restart Finder.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 8)
-                Text("killall Finder")
-                    .font(.system(.footnote, design: .monospaced))
-                Button("Copy Command") {
-                    AppDelegate.copyRestartFinderCommand()
+                Button("Quit") {
+                    NSApp.terminate(nil)
                 }
-                .controlSize(.small)
             }
 
-            Text("Usage: Right-click a file in Finder → Archive or Convert")
-                .font(.footnote)
+            Spacer(minLength: 0)
+
+            HStack(spacing: 10) {
+                Text("\(metadata.appName) v\(metadata.shortVersion)")
+                Link("Privacy Policy", destination: privacyPolicyURL)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .font(.footnote)
+            .foregroundStyle(.secondary)
         }
-        .padding(20)
-        .frame(width: 560)
+        .padding(24)
+        .frame(width: 520, height: 220, alignment: .topLeading)
     }
 }
 
-private final class ExtensionOnboardingWindowController: NSWindowController {
+private final class SettingsWindowController: NSWindowController {
     init() {
-        let hostingController = NSHostingController(rootView: ExtensionOnboardingView())
+        let hostingController = NSHostingController(rootView: SettingsActivationView())
         let window = NSWindow(
             contentViewController: hostingController
         )
-        window.title = AppBundleMetadata.current.appName
+        window.title = "Settings"
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 560, height: 330))
+        window.setContentSize(NSSize(width: 520, height: 220))
         window.center()
 
         super.init(window: window)

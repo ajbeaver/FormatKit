@@ -9,10 +9,11 @@ struct FormatKitApp: App {
             EmptyView()
         }
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("Enable Extension") {
-                    appDelegate.presentExtensionOnboardingWindow()
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.presentSettingsWindow()
                 }
+                .keyboardShortcut(",", modifiers: .command)
             }
         }
     }
