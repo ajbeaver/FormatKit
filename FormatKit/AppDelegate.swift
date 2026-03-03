@@ -288,8 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let resolvedItems = try resolveBookmarkURLs(from: request.selectedItemBookmarks)
-        let resolvedParents = try resolveBookmarkURLs(from: request.parentDirectoryBookmarks)
-        let securityScope = SecurityScopedAccessSession(urls: resolvedParents + resolvedItems)
+        let securityScope = SecurityScopedAccessSession(urls: resolvedItems)
         guard securityScope.startAccessing() else {
             securityScope.stopAccessing()
             throw ValidationError.invalidSelection("Could not access the selected files in the sandbox.")

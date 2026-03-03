@@ -133,8 +133,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: Date(),
-            selectedItemBookmarks: [Data("a".utf8)],
-            parentDirectoryBookmarks: [Data("b".utf8)]
+            selectedItemBookmarks: [Data("a".utf8)]
         )
 
         try store.save(request)
@@ -154,8 +153,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .convert,
             createdAt: Date().addingTimeInterval(-600),
-            selectedItemBookmarks: [Data("x".utf8)],
-            parentDirectoryBookmarks: [Data("y".utf8)]
+            selectedItemBookmarks: [Data("x".utf8)]
         )
 
         try store.save(staleRequest)

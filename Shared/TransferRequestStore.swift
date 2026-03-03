@@ -11,7 +11,6 @@ struct TransferRequest: Codable {
     let action: TransferAction
     let createdAt: Date
     let selectedItemBookmarks: [Data]
-    let parentDirectoryBookmarks: [Data]
 }
 
 enum TransferRequestDefaults {

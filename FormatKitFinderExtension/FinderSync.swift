@@ -78,19 +78,12 @@ final class FinderSync: FIFinderSync {
         }
         guard itemBookmarks.count == urls.count else { return nil }
 
-        let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
-        let parentBookmarks = parentURLs.compactMap {
-            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        guard parentBookmarks.count == parentURLs.count else { return nil }
-
         let request = TransferRequest(
             version: TransferRequestDefaults.schemaVersion,
             requestId: UUID(),
             action: action,
             createdAt: Date(),
-            selectedItemBookmarks: itemBookmarks,
-            parentDirectoryBookmarks: parentBookmarks
+            selectedItemBookmarks: itemBookmarks
         )
         do {
             try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
