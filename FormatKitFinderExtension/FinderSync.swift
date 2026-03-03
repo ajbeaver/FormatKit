@@ -4,6 +4,7 @@ import Foundation
 
 final class FinderSync: FIFinderSync {
     private let controller = FIFinderSyncController.default()
+    private let requestStore: RequestStore? = try? AppGroupTransferRequestStore()
 
     override init() {
         super.init()
@@ -37,10 +38,10 @@ final class FinderSync: FIFinderSync {
         guard !urls.isEmpty else { return }
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
 
-        let paths = urls.map(\.path)
         guard
-            let jsonData = try? JSONEncoder().encode(paths),
-            let components = archiveURLComponents(withBase64Paths: jsonData.base64EncodedString()),
+            let requestStore,
+            let requestId = persistTransferRequest(action: .archive, urls: urls, requestStore: requestStore),
+            let components = requestURLComponents(action: .archive, requestId: requestId),
             let url = components.url
         else {
             return
@@ -55,10 +56,10 @@ final class FinderSync: FIFinderSync {
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
         guard AudioSelectionGate.allSupportedAudio(urls: urls) || VideoSelectionGate.isSingleSupportedVideo(urls: urls) else { return }
 
-        let paths = urls.map(\.path)
         guard
-            let jsonData = try? JSONEncoder().encode(paths),
-            let components = urlComponents(action: "convert", withBase64Paths: jsonData.base64EncodedString()),
+            let requestStore,
+            let requestId = persistTransferRequest(action: .convert, urls: urls, requestStore: requestStore),
+            let components = requestURLComponents(action: .convert, requestId: requestId),
             let url = components.url
         else {
             return
@@ -71,15 +72,40 @@ final class FinderSync: FIFinderSync {
         (controller.selectedItemURLs() ?? []).filter(\.isFileURL)
     }
 
-    private func archiveURLComponents(withBase64Paths encodedPaths: String) -> URLComponents? {
-        urlComponents(action: "archive", withBase64Paths: encodedPaths)
+    private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) -> UUID? {
+        let itemBookmarks = urls.compactMap {
+            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        guard itemBookmarks.count == urls.count else { return nil }
+
+        let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
+        let parentBookmarks = parentURLs.compactMap {
+            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        guard parentBookmarks.count == parentURLs.count else { return nil }
+
+        let request = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: action,
+            createdAt: Date(),
+            selectedItemBookmarks: itemBookmarks,
+            parentDirectoryBookmarks: parentBookmarks
+        )
+        do {
+            try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+            try requestStore.save(request)
+            return request.requestId
+        } catch {
+            return nil
+        }
     }
 
-    private func urlComponents(action: String, withBase64Paths encodedPaths: String) -> URLComponents? {
+    private func requestURLComponents(action: TransferAction, requestId: UUID) -> URLComponents? {
         var components = URLComponents()
         components.scheme = "formatkit"
-        components.host = action
-        components.queryItems = [URLQueryItem(name: "paths", value: encodedPaths)]
+        components.host = action.rawValue
+        components.queryItems = [URLQueryItem(name: "requestId", value: requestId.uuidString)]
         return components
     }
 }

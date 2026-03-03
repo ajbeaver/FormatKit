@@ -121,4 +121,55 @@ struct FormatKitTests {
         let supported: [VideoOutputFormat] = [.mov]
         #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported).isEmpty)
     }
+
+    @Test func transferRequestStoreRoundtripSaveAndTake() throws {
+        let fileManager = FileManager.default
+        let storeDirectory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = AppGroupTransferRequestStore(baseDirectoryURL: storeDirectory, fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: storeDirectory) }
+
+        let request = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .archive,
+            createdAt: Date(),
+            selectedItemBookmarks: [Data("a".utf8)],
+            parentDirectoryBookmarks: [Data("b".utf8)]
+        )
+
+        try store.save(request)
+        let consumed = try store.take(requestId: request.requestId)
+        #expect(consumed.requestId == request.requestId)
+        #expect(consumed.action == .archive)
+    }
+
+    @Test func transferRequestStoreCleanupRemovesExpiredRequests() throws {
+        let fileManager = FileManager.default
+        let storeDirectory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = AppGroupTransferRequestStore(baseDirectoryURL: storeDirectory, fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: storeDirectory) }
+
+        let staleRequest = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .convert,
+            createdAt: Date().addingTimeInterval(-600),
+            selectedItemBookmarks: [Data("x".utf8)],
+            parentDirectoryBookmarks: [Data("y".utf8)]
+        )
+
+        try store.save(staleRequest)
+        try store.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+
+        do {
+            _ = try store.take(requestId: staleRequest.requestId)
+            Issue.record("Expired request should have been removed")
+        } catch let error as TransferRequestStoreError {
+            if case .requestNotFound = error {
+                // Expected.
+            } else {
+                Issue.record("Unexpected error type: \(error)")
+            }
+        }
+    }
 }

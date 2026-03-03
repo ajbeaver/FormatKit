@@ -7,12 +7,14 @@ import SwiftUI
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
+    private let requestStore: RequestStore? = try? AppGroupTransferRequestStore()
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var didReceiveOpenRequest = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        try? requestStore?.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
         if Self.isFinderExtensionEnabled {
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.didReceiveOpenRequest else { return }
@@ -73,57 +75,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         guard
             url.scheme?.lowercased() == "formatkit",
-            let action = url.host?.lowercased(),
-            let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-            let rawPaths = decodePaths(from: components)
+            let rawAction = url.host?.lowercased(),
+            let action = TransferAction(rawValue: rawAction),
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else {
             presentErrorAndMaybeTerminate(title: "Invalid Request", message: "The request URL was malformed.")
             return
         }
 
         switch action {
-        case "archive":
-            handleArchiveRequest(rawPaths: rawPaths)
-        case "convert":
-            handleConvertRequest(rawPaths: rawPaths)
-        default:
-            presentErrorAndMaybeTerminate(title: "Invalid Request", message: "Unsupported action: \(action)")
+        case .archive:
+            handleArchiveRequest(components: components)
+        case .convert:
+            handleConvertRequest(components: components)
         }
     }
 
-    private func decodePaths(from components: URLComponents) -> [String]? {
-        guard
-            let encodedPaths = components.queryItems?.first(where: { $0.name == "paths" })?.value,
-            let data = Data(base64Encoded: encodedPaths),
-            let rawPaths = try? JSONDecoder().decode([String].self, from: data)
-        else {
-            return nil
-        }
-        return rawPaths
-    }
-
-    private func handleArchiveRequest(rawPaths: [String]) {
-        let selection: [URL]
+    private func handleArchiveRequest(components: URLComponents) {
+        let archiveRequest: ResolvedTransferRequest
         do {
-            selection = try validateArchiveSelection(paths: rawPaths)
+            archiveRequest = try decodeTransferRequest(from: components, expectedAction: .archive)
         } catch {
             presentErrorAndMaybeTerminate(
                 title: "Archive Request Failed",
-                message: "Could not read the selected item paths. \(error.localizedDescription)"
+                message: error.localizedDescription
+            )
+            return
+        }
+
+        let selection: [URL]
+        do {
+            selection = try validateArchiveSelection(urls: archiveRequest.selection)
+        } catch {
+            archiveRequest.securityScope?.stopAccessing()
+            presentErrorAndMaybeTerminate(
+                title: "Archive Request Failed",
+                message: error.localizedDescription
             )
             return
         }
 
         NSApp.activate(ignoringOtherApps: true)
         guard let format = presentCompressModal() else {
+            archiveRequest.securityScope?.stopAccessing()
             NSApp.terminate(nil)
             return
         }
 
         let job: ArchiveJob
         do {
-            job = try ArchiveJob(selection: selection, format: format)
+            job = try ArchiveJob(selection: selection, format: format, securityScope: archiveRequest.securityScope)
         } catch let error as ArchiveNamingError {
+            archiveRequest.securityScope?.stopAccessing()
             let message: String
             switch error {
             case .emptySelection:
@@ -134,6 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentErrorAndMaybeTerminate(title: "Invalid Selection", message: message)
             return
         } catch {
+            archiveRequest.securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(title: "Invalid Selection", message: error.localizedDescription)
             return
         }
@@ -141,29 +145,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startArchiving(job)
     }
 
-    private func handleConvertRequest(rawPaths: [String]) {
-        if handleVideoConvertRequestIfNeeded(rawPaths: rawPaths) {
+    private func handleConvertRequest(components: URLComponents) {
+        let request: ResolvedTransferRequest
+        do {
+            request = try decodeTransferRequest(from: components, expectedAction: .convert)
+        } catch {
+            presentErrorAndMaybeTerminate(title: "Convert Request Failed", message: error.localizedDescription)
             return
         }
 
-        let selection: [URL]
+        if handleVideoConvertRequestIfNeeded(urls: request.selection, securityScope: request.securityScope) {
+            return
+        }
+
+        let selection = request.selection
         do {
-            selection = try validateAudioSelection(paths: rawPaths)
+            _ = try validateAudioSelection(urls: selection)
         } catch {
+            request.securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(
                 title: "Convert Request Failed",
-                message: "Could not read the selected item paths. \(error.localizedDescription)"
+                message: error.localizedDescription
             )
             return
         }
 
         guard let inputFormats = AudioSelectionGate.inputFormats(for: selection) else {
+            request.securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(title: "Invalid Selection", message: "All selected items must be supported audio files.")
             return
         }
 
         let allowedFormats = AudioConversionMatrix.allowedOutputs(for: inputFormats).filter { $0 != .mp3 }
         guard !allowedFormats.isEmpty else {
+            request.securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(
                 title: "Invalid Selection",
                 message: "The selected audio files do not share a common target format."
@@ -173,22 +188,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         guard let outputFormat = presentConvertModal(allowedFormats: allowedFormats) else {
+            request.securityScope?.stopAccessing()
             NSApp.terminate(nil)
             return
         }
 
-        let job = ConvertJob(selection: selection, outputFormat: outputFormat)
+        let job = ConvertJob(selection: selection, outputFormat: outputFormat, securityScope: request.securityScope)
         startConverting(job)
     }
 
-    private func handleVideoConvertRequestIfNeeded(rawPaths: [String]) -> Bool {
-        let urls: [URL]
-        do {
-            urls = try validateCommonSelection(paths: rawPaths)
-        } catch {
-            return false
-        }
-
+    private func handleVideoConvertRequestIfNeeded(urls: [URL], securityScope: SecurityScopedAccessSession?) -> Bool {
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
             return false
         }
@@ -200,6 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try validateVideoAssetPreflight(sourceURL: sourceURL)
         } catch {
+            securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(title: "Convert Failed", message: error.localizedDescription)
             return true
         }
@@ -214,6 +224,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             supportedOutputs: supportedOutputs
         )
         guard !allowedOutputs.isEmpty else {
+            securityScope?.stopAccessing()
             presentErrorAndMaybeTerminate(
                 title: "Convert not available for this file.",
                 message: "No alternative output formats available."
@@ -223,22 +234,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         guard let outputFormat = presentVideoConvertModal(allowedFormats: allowedOutputs) else {
+            securityScope?.stopAccessing()
             NSApp.terminate(nil)
             return true
         }
 
-        let job = VideoConvertJob(sourceURL: sourceURL, outputFormat: outputFormat)
+        let job = VideoConvertJob(sourceURL: sourceURL, outputFormat: outputFormat, securityScope: securityScope)
         startVideoConverting(job)
         return true
     }
 
-    private func validateCommonSelection(paths: [String]) throws -> [URL] {
-        guard !paths.isEmpty else {
+    private func validateCommonSelection(urls: [URL]) throws -> [URL] {
+        guard !urls.isEmpty else {
             throw ValidationError.emptySelection
         }
 
         let fileManager = FileManager.default
-        let urls = paths.map { URL(fileURLWithPath: $0) }
         for url in urls {
             guard url.isFileURL else {
                 throw ValidationError.invalidSelection("Selection contained a non-file URL.")
@@ -250,23 +261,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return urls
     }
 
-    private func validateArchiveSelection(paths: [String]) throws -> [URL] {
-        let urls = try validateCommonSelection(paths: paths)
+    private func validateArchiveSelection(urls: [URL]) throws -> [URL] {
+        _ = try validateCommonSelection(urls: urls)
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
             throw ValidationError.invalidSelection("Selection contains an item that is already an archive.")
         }
         return urls
     }
 
-    private func validateAudioSelection(paths: [String]) throws -> [URL] {
-        let urls = try validateCommonSelection(paths: paths)
-        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
-            throw ValidationError.invalidSelection("Selection contains an archived item.")
+    private func decodeTransferRequest(from components: URLComponents, expectedAction: TransferAction) throws -> ResolvedTransferRequest {
+        let requestId = try parseRequestID(from: components)
+        guard let requestStore else {
+            throw ValidationError.invalidSelection("Secure request store is unavailable.")
         }
-        guard AudioSelectionGate.allSupportedAudio(urls: urls) else {
-            throw ValidationError.invalidSelection("Selection must contain only supported audio files (mp3, m4a, wav, aiff, flac).")
+
+        try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+        let request = try requestStore.take(requestId: requestId)
+        guard request.version == TransferRequestDefaults.schemaVersion else {
+            throw TransferRequestStoreError.malformedRequest
+        }
+        guard request.action == expectedAction else {
+            throw ValidationError.invalidSelection("Request action mismatch.")
+        }
+        guard Date().timeIntervalSince(request.createdAt) <= TransferRequestDefaults.maxAge else {
+            throw TransferRequestStoreError.staleRequest
+        }
+
+        let resolvedItems = try resolveBookmarkURLs(from: request.selectedItemBookmarks)
+        let resolvedParents = try resolveBookmarkURLs(from: request.parentDirectoryBookmarks)
+        let securityScope = SecurityScopedAccessSession(urls: resolvedParents + resolvedItems)
+        guard securityScope.startAccessing() else {
+            securityScope.stopAccessing()
+            throw ValidationError.invalidSelection("Could not access the selected files in the sandbox.")
+        }
+        return ResolvedTransferRequest(selection: resolvedItems, securityScope: securityScope)
+    }
+
+    private func parseRequestID(from components: URLComponents) throws -> UUID {
+        guard
+            let requestIdString = components.queryItems?.first(where: { $0.name == "requestId" })?.value,
+            let requestId = UUID(uuidString: requestIdString)
+        else {
+            throw ValidationError.invalidSelection("The request URL was malformed.")
+        }
+        return requestId
+    }
+
+    private func resolveBookmarkURLs(from bookmarkDataItems: [Data]) throws -> [URL] {
+        var urls: [URL] = []
+        for bookmarkData in bookmarkDataItems {
+            var isStale = false
+            let url = try URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [.withSecurityScope],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            )
+            guard !isStale else {
+                throw TransferRequestStoreError.staleRequest
+            }
+            urls.append(url.standardizedFileURL)
         }
         return urls
+    }
+
+    private func validateAudioSelection(urls: [URL]) throws -> [URL] {
+        let validatedURLs = try validateCommonSelection(urls: urls)
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: validatedURLs) else {
+            throw ValidationError.invalidSelection("Selection contains an archived item.")
+        }
+        guard AudioSelectionGate.allSupportedAudio(urls: validatedURLs) else {
+            throw ValidationError.invalidSelection("Selection must contain only supported audio files (mp3, m4a, wav, aiff, flac).")
+        }
+        return validatedURLs
     }
 
     private func validateVideoAssetPreflight(sourceURL: URL) throws {
@@ -341,6 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         compressionQueue.async { [job] in
             let result = Self.runArchive(job)
             DispatchQueue.main.async {
+                job.securityScope?.stopAccessing()
                 self.progressWindowController?.close()
                 self.progressWindowController = nil
                 self.isArchiving = false
@@ -358,6 +426,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         compressionQueue.async { [job] in
             let result = Self.runConversions(job)
             DispatchQueue.main.async {
+                job.securityScope?.stopAccessing()
                 self.progressWindowController?.close()
                 self.progressWindowController = nil
                 self.isArchiving = false
@@ -375,6 +444,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         compressionQueue.async { [job] in
             let result = Self.runVideoConversion(job)
             DispatchQueue.main.async {
+                job.securityScope?.stopAccessing()
                 self.progressWindowController?.close()
                 self.progressWindowController = nil
                 self.isArchiving = false
@@ -1013,16 +1083,72 @@ nonisolated private final class SyncResultBox<T>: @unchecked Sendable {
     }
 }
 
+private struct ResolvedTransferRequest {
+    let selection: [URL]
+    let securityScope: SecurityScopedAccessSession?
+}
+
+private final class SecurityScopedAccessSession {
+    private let urls: [URL]
+    private let lock = NSLock()
+    private var activeURLs: [URL] = []
+    private var isStopped = false
+
+    init(urls: [URL]) {
+        var seen = Set<String>()
+        self.urls = urls.compactMap { url in
+            let key = url.standardizedFileURL.path
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return url.standardizedFileURL
+        }
+    }
+
+    func startAccessing() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard activeURLs.isEmpty else { return true }
+
+        var didStartAll = true
+        for url in urls {
+            if url.startAccessingSecurityScopedResource() {
+                activeURLs.append(url)
+            } else {
+                didStartAll = false
+            }
+        }
+        return didStartAll
+    }
+
+    func stopAccessing() {
+        lock.lock()
+        if isStopped {
+            lock.unlock()
+            return
+        }
+        isStopped = true
+        let urlsToStop = activeURLs
+        activeURLs.removeAll()
+        lock.unlock()
+
+        for url in urlsToStop {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+}
+
 private struct ArchiveJob {
     let selection: [URL]
     let format: ArchiveFormat
     let workingDirectory: URL
     let relativeItemNames: [String]
     let outputURL: URL
+    let securityScope: SecurityScopedAccessSession?
 
-    init(selection: [URL], format: ArchiveFormat, now: Date = Date()) throws {
+    init(selection: [URL], format: ArchiveFormat, securityScope: SecurityScopedAccessSession?, now: Date = Date()) throws {
         self.selection = selection
         self.format = format
+        self.securityScope = securityScope
         workingDirectory = try ArchiveNameBuilder.commonParentDirectory(for: selection)
         relativeItemNames = try ArchiveNameBuilder.relativeItemNames(for: selection)
         outputURL = try ArchiveNameBuilder.outputURL(for: selection, format: format, now: now)
@@ -1033,10 +1159,12 @@ private struct ConvertJob {
     let selection: [URL]
     let outputFormat: AudioOutputFormat
     let tasks: [ConvertTask]
+    let securityScope: SecurityScopedAccessSession?
 
-    init(selection: [URL], outputFormat: AudioOutputFormat) {
+    init(selection: [URL], outputFormat: AudioOutputFormat, securityScope: SecurityScopedAccessSession?) {
         self.selection = selection
         self.outputFormat = outputFormat
+        self.securityScope = securityScope
         self.tasks = selection.map { ConvertTask(sourceURL: $0, outputURL: ConvertNameBuilder.outputURL(for: $0, outputFormat: outputFormat), outputFormat: outputFormat) }
     }
 }
@@ -1051,10 +1179,12 @@ private struct VideoConvertJob {
     let sourceURL: URL
     let outputFormat: VideoOutputFormat
     let outputURL: URL
+    let securityScope: SecurityScopedAccessSession?
 
-    init(sourceURL: URL, outputFormat: VideoOutputFormat) {
+    init(sourceURL: URL, outputFormat: VideoOutputFormat, securityScope: SecurityScopedAccessSession?) {
         self.sourceURL = sourceURL
         self.outputFormat = outputFormat
+        self.securityScope = securityScope
         self.outputURL = VideoConvertNameBuilder.outputURL(for: sourceURL, outputFormat: outputFormat)
     }
 }
