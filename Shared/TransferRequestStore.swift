@@ -11,10 +11,11 @@ struct TransferRequest: Codable {
     let action: TransferAction
     let createdAt: Date
     let selectedItemBookmarks: [Data]
+    let parentDirectoryBookmarks: [Data]
 }
 
 enum TransferRequestDefaults {
-    static let schemaVersion = 1
+    static let schemaVersion = 2
     static let appGroupIdentifier = "group.com.ajbeaver.FormatKit"
     static let maxAge: TimeInterval = 5 * 60
 }

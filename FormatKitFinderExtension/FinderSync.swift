@@ -73,17 +73,31 @@ final class FinderSync: FIFinderSync {
     }
 
     private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) -> UUID? {
+        let scopedSession = ScopedURLAccessSession(urls: urls)
+        guard scopedSession.startAccessing() else {
+            scopedSession.stopAccessing()
+            return nil
+        }
+        defer { scopedSession.stopAccessing() }
+
         let itemBookmarks = urls.compactMap {
             try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         }
         guard itemBookmarks.count == urls.count else { return nil }
+
+        let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
+        let parentBookmarks = parentURLs.compactMap {
+            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        }
+        guard parentBookmarks.count == parentURLs.count else { return nil }
 
         let request = TransferRequest(
             version: TransferRequestDefaults.schemaVersion,
             requestId: UUID(),
             action: action,
             createdAt: Date(),
-            selectedItemBookmarks: itemBookmarks
+            selectedItemBookmarks: itemBookmarks,
+            parentDirectoryBookmarks: parentBookmarks
         )
         do {
             try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
@@ -100,5 +114,43 @@ final class FinderSync: FIFinderSync {
         components.host = action.rawValue
         components.queryItems = [URLQueryItem(name: "requestId", value: requestId.uuidString)]
         return components
+    }
+}
+
+private final class ScopedURLAccessSession {
+    private let urls: [URL]
+    private var activeURLs: [URL] = []
+    private var isStopped = false
+
+    init(urls: [URL]) {
+        var seen = Set<String>()
+        self.urls = urls.compactMap { url in
+            let standardized = url.standardizedFileURL
+            let key = standardized.path
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return standardized
+        }
+    }
+
+    func startAccessing() -> Bool {
+        var success = true
+        for url in urls {
+            if url.startAccessingSecurityScopedResource() {
+                activeURLs.append(url)
+            } else {
+                success = false
+            }
+        }
+        return success
+    }
+
+    func stopAccessing() {
+        guard !isStopped else { return }
+        isStopped = true
+        for url in activeURLs {
+            url.stopAccessingSecurityScopedResource()
+        }
+        activeURLs.removeAll()
     }
 }
