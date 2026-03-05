@@ -14,8 +14,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var didReceiveOpenRequest = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        try? requestStore?.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+        if let requestStore {
+            do {
+                try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+            } catch {
+                NSLog("FormatKit preflight cleanup failed: %@", error.localizedDescription)
+            }
+        } else {
+            NSLog("FormatKit preflight failed: App Group request store unavailable.")
+        }
         if Self.isFinderExtensionEnabled {
+            if requestStore == nil {
+                presentErrorAndMaybeTerminate(
+                    title: "Finder Integration Unavailable",
+                    message: "App Group request store is unavailable. Check app group entitlements/provisioning."
+                )
+                return
+            }
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.didReceiveOpenRequest else { return }
                 NSApp.terminate(nil)
@@ -105,11 +120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleArchiveRequest(components: URLComponents) {
         let archiveRequest: ResolvedTransferRequest
         do {
+            NSLog("FormatKit decoding archive transfer request.")
             archiveRequest = try decodeTransferRequest(from: components, expectedAction: .archive)
         } catch {
             presentErrorAndMaybeTerminate(
                 title: "Archive Request Failed",
-                message: error.localizedDescription
+                message: requestFailureMessage(for: .archive, error: error)
             )
             return
         }
@@ -159,9 +175,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleConvertRequest(components: URLComponents) {
         let request: ResolvedTransferRequest
         do {
+            NSLog("FormatKit decoding convert transfer request.")
             request = try decodeTransferRequest(from: components, expectedAction: .convert)
         } catch {
-            presentErrorAndMaybeTerminate(title: "Convert Request Failed", message: error.localizedDescription)
+            presentErrorAndMaybeTerminate(title: "Convert Request Failed", message: requestFailureMessage(for: .convert, error: error))
             return
         }
 
@@ -288,23 +305,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
         let request = try requestStore.take(requestId: requestId)
-        guard request.version == TransferRequestDefaults.schemaVersion else {
-            throw TransferRequestStoreError.malformedRequest
-        }
-        guard request.action == expectedAction else {
-            throw ValidationError.invalidSelection("Request action mismatch.")
-        }
-        guard Date().timeIntervalSince(request.createdAt) <= TransferRequestDefaults.maxAge else {
-            throw TransferRequestStoreError.staleRequest
-        }
+        try request.validate(expectedAction: expectedAction, now: Date())
 
         let resolvedItems = try resolveBookmarkURLs(from: request.selectedItemBookmarks)
         let resolvedParents = try resolveBookmarkURLs(from: request.parentDirectoryBookmarks)
         let securityScope = SecurityScopedAccessSession(urls: resolvedItems + resolvedParents)
+        NSLog("FormatKit resolved transfer request %@ with %ld item scope(s) and %ld parent scope(s).", requestId.uuidString, resolvedItems.count, resolvedParents.count)
         guard securityScope.startAccessing() else {
             securityScope.stopAccessing()
             throw ValidationError.invalidSelection("Could not access the selected files in the sandbox.")
         }
+        NSLog("FormatKit started security scope for request %@.", requestId.uuidString)
         return ResolvedTransferRequest(selection: resolvedItems, securityScope: securityScope)
     }
 
@@ -334,6 +345,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             urls.append(url.standardizedFileURL)
         }
         return urls
+    }
+
+    private func requestFailureMessage(for action: TransferAction, error: Error) -> String {
+        switch error {
+        case TransferRequestStoreError.malformedRequest:
+            return "The \(action.rawValue) request payload was malformed."
+        case TransferRequestStoreError.staleRequest:
+            return "The \(action.rawValue) request expired. Try again from Finder."
+        case TransferRequestStoreError.actionMismatch:
+            return "The request type did not match the requested action."
+        case TransferRequestStoreError.schemaMismatch:
+            return "The request version is incompatible with this app build."
+        case TransferRequestStoreError.requestNotFound:
+            return "The request was not found. Try again from Finder."
+        default:
+            return error.localizedDescription
+        }
     }
 
     private func validateAudioSelection(urls: [URL]) throws -> [URL] {

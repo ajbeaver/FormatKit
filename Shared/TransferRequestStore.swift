@@ -23,6 +23,8 @@ enum TransferRequestDefaults {
 enum TransferRequestStoreError: LocalizedError {
     case appGroupContainerUnavailable(String)
     case requestNotFound(UUID)
+    case schemaMismatch(expected: Int, actual: Int)
+    case actionMismatch(expected: TransferAction, actual: TransferAction)
     case malformedRequest
     case staleRequest
     case ioFailure(String)
@@ -33,12 +35,30 @@ enum TransferRequestStoreError: LocalizedError {
             return "App Group container unavailable for \(identifier)."
         case .requestNotFound(let requestId):
             return "Request not found: \(requestId.uuidString)."
+        case .schemaMismatch(let expected, let actual):
+            return "Request version mismatch. Expected \(expected), got \(actual)."
+        case .actionMismatch(let expected, let actual):
+            return "Request action mismatch. Expected \(expected.rawValue), got \(actual.rawValue)."
         case .malformedRequest:
             return "Request payload was malformed."
         case .staleRequest:
             return "Request has expired."
         case .ioFailure(let message):
             return message
+        }
+    }
+}
+
+extension TransferRequest {
+    func validate(expectedAction: TransferAction, now: Date, schemaVersion: Int = TransferRequestDefaults.schemaVersion, maxAge: TimeInterval = TransferRequestDefaults.maxAge) throws {
+        guard version == schemaVersion else {
+            throw TransferRequestStoreError.schemaMismatch(expected: schemaVersion, actual: version)
+        }
+        guard action == expectedAction else {
+            throw TransferRequestStoreError.actionMismatch(expected: expectedAction, actual: action)
+        }
+        guard now.timeIntervalSince(createdAt) <= maxAge else {
+            throw TransferRequestStoreError.staleRequest
         }
     }
 }

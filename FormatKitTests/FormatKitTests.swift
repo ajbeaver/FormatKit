@@ -172,4 +172,103 @@ struct FormatKitTests {
             }
         }
     }
+
+    @Test func transferRequestStoreTakeIsSingleUse() throws {
+        let fileManager = FileManager.default
+        let storeDirectory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let store = AppGroupTransferRequestStore(baseDirectoryURL: storeDirectory, fileManager: fileManager)
+        defer { try? fileManager.removeItem(at: storeDirectory) }
+
+        let request = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .archive,
+            createdAt: Date(),
+            selectedItemBookmarks: [Data("a".utf8)],
+            parentDirectoryBookmarks: [Data("b".utf8)]
+        )
+        try store.save(request)
+        _ = try store.take(requestId: request.requestId)
+
+        do {
+            _ = try store.take(requestId: request.requestId)
+            Issue.record("Expected second take to fail after single-use consume")
+        } catch let error as TransferRequestStoreError {
+            if case .requestNotFound = error {
+                // Expected.
+            } else {
+                Issue.record("Unexpected error type: \(error)")
+            }
+        }
+    }
+
+    @Test func transferRequestValidationRejectsSchemaActionAndStale() throws {
+        let now = Date()
+        let valid = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .archive,
+            createdAt: now,
+            selectedItemBookmarks: [Data()],
+            parentDirectoryBookmarks: [Data()]
+        )
+        try valid.validate(expectedAction: .archive, now: now)
+
+        let wrongSchema = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion - 1,
+            requestId: UUID(),
+            action: .archive,
+            createdAt: now,
+            selectedItemBookmarks: [Data()],
+            parentDirectoryBookmarks: [Data()]
+        )
+        do {
+            try wrongSchema.validate(expectedAction: .archive, now: now)
+            Issue.record("Expected schema mismatch")
+        } catch let error as TransferRequestStoreError {
+            if case .schemaMismatch = error {
+                // Expected.
+            } else {
+                Issue.record("Unexpected schema error: \(error)")
+            }
+        }
+
+        let wrongAction = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .convert,
+            createdAt: now,
+            selectedItemBookmarks: [Data()],
+            parentDirectoryBookmarks: [Data()]
+        )
+        do {
+            try wrongAction.validate(expectedAction: .archive, now: now)
+            Issue.record("Expected action mismatch")
+        } catch let error as TransferRequestStoreError {
+            if case .actionMismatch = error {
+                // Expected.
+            } else {
+                Issue.record("Unexpected action error: \(error)")
+            }
+        }
+
+        let stale = TransferRequest(
+            version: TransferRequestDefaults.schemaVersion,
+            requestId: UUID(),
+            action: .archive,
+            createdAt: now.addingTimeInterval(-(TransferRequestDefaults.maxAge + 1)),
+            selectedItemBookmarks: [Data()],
+            parentDirectoryBookmarks: [Data()]
+        )
+        do {
+            try stale.validate(expectedAction: .archive, now: now)
+            Issue.record("Expected stale request")
+        } catch let error as TransferRequestStoreError {
+            if case .staleRequest = error {
+                // Expected.
+            } else {
+                Issue.record("Unexpected stale error: \(error)")
+            }
+        }
+    }
 }

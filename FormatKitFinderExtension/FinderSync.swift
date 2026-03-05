@@ -11,9 +11,11 @@ final class FinderSync: FIFinderSync {
         do {
             requestStore = try AppGroupTransferRequestStore()
             requestStoreInitError = nil
+            NSLog("FormatKitFinderExtension request store initialized.")
         } catch {
             requestStore = nil
             requestStoreInitError = error.localizedDescription
+            NSLog("FormatKitFinderExtension request store init failed: %@", error.localizedDescription)
         }
         super.init()
         controller.directoryURLs = Set([URL(fileURLWithPath: "/")])
@@ -61,6 +63,7 @@ final class FinderSync: FIFinderSync {
     }
 
     private func submitRequest(action: TransferAction, urls: [URL]) {
+        NSLog("FormatKitFinderExtension submitting %@ request for %ld item(s).", action.rawValue, urls.count)
         guard let requestStore else {
             notifyFailure(
                 action: action,
@@ -72,7 +75,9 @@ final class FinderSync: FIFinderSync {
         let requestId: UUID
         do {
             requestId = try persistTransferRequest(action: action, urls: urls, requestStore: requestStore)
+            NSLog("FormatKitFinderExtension request %@ persisted as %@", action.rawValue, requestId.uuidString)
         } catch {
+            NSLog("FormatKitFinderExtension request %@ persist failed: %@", action.rawValue, error.localizedDescription)
             notifyFailure(action: action, message: error.localizedDescription)
             return
         }
@@ -81,6 +86,7 @@ final class FinderSync: FIFinderSync {
             let components = requestURLComponents(action: action, requestId: requestId),
             let url = components.url
         else {
+            NSLog("FormatKitFinderExtension request %@ URL build failed.", action.rawValue)
             notifyFailure(action: action, message: "Could not build app request URL.")
             return
         }
@@ -95,6 +101,7 @@ final class FinderSync: FIFinderSync {
             throw TransferRequestStoreError.ioFailure("Could not start security-scoped access for selected items.")
         }
         defer { scopedSession.stopAccessing() }
+        NSLog("FormatKitFinderExtension security scope started for %ld selected item(s).", urls.count)
 
         let itemBookmarks = urls.compactMap {
             try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
@@ -102,6 +109,7 @@ final class FinderSync: FIFinderSync {
         guard itemBookmarks.count == urls.count else {
             throw TransferRequestStoreError.ioFailure("Could not create selected item bookmarks.")
         }
+        NSLog("FormatKitFinderExtension created %ld selected-item bookmark(s).", itemBookmarks.count)
 
         let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
         let parentBookmarks = parentURLs.compactMap {
@@ -110,6 +118,7 @@ final class FinderSync: FIFinderSync {
         guard parentBookmarks.count == parentURLs.count else {
             throw TransferRequestStoreError.ioFailure("Could not create parent directory bookmarks.")
         }
+        NSLog("FormatKitFinderExtension created %ld parent-directory bookmark(s).", parentBookmarks.count)
 
         let request = TransferRequest(
             version: TransferRequestDefaults.schemaVersion,
@@ -121,6 +130,7 @@ final class FinderSync: FIFinderSync {
         )
         try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
         try requestStore.save(request)
+        NSLog("FormatKitFinderExtension request saved to app group store.")
         return request.requestId
     }
 
@@ -133,6 +143,7 @@ final class FinderSync: FIFinderSync {
     }
 
     private func notifyFailure(action: TransferAction, message: String) {
+        NSLog("FormatKitFinderExtension %@ request failure: %@", action.rawValue, message)
         var components = URLComponents()
         components.scheme = "formatkit"
         components.host = "error"
