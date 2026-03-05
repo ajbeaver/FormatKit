@@ -95,28 +95,26 @@ final class FinderSync: FIFinderSync {
     }
 
     private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) throws -> UUID {
-        let scopedSession = ScopedURLAccessSession(urls: urls)
-        guard scopedSession.startAccessing() else {
-            scopedSession.stopAccessing()
-            throw TransferRequestStoreError.ioFailure("Could not start security-scoped access for selected items.")
-        }
-        defer { scopedSession.stopAccessing() }
-        NSLog("FormatKitFinderExtension security scope started for %ld selected item(s).", urls.count)
-
-        let itemBookmarks = urls.compactMap {
-            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        guard itemBookmarks.count == urls.count else {
-            throw TransferRequestStoreError.ioFailure("Could not create selected item bookmarks.")
+        var itemBookmarks: [Data] = []
+        for url in urls {
+            do {
+                let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                itemBookmarks.append(bookmark)
+            } catch {
+                throw TransferRequestStoreError.ioFailure("Could not create selected item bookmark for \(url.path): \(error.localizedDescription)")
+            }
         }
         NSLog("FormatKitFinderExtension created %ld selected-item bookmark(s).", itemBookmarks.count)
 
         let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
-        let parentBookmarks = parentURLs.compactMap {
-            try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-        }
-        guard parentBookmarks.count == parentURLs.count else {
-            throw TransferRequestStoreError.ioFailure("Could not create parent directory bookmarks.")
+        var parentBookmarks: [Data] = []
+        for parentURL in parentURLs {
+            do {
+                let bookmark = try parentURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+                parentBookmarks.append(bookmark)
+            } catch {
+                throw TransferRequestStoreError.ioFailure("Could not create parent directory bookmark for \(parentURL.path): \(error.localizedDescription)")
+            }
         }
         NSLog("FormatKitFinderExtension created %ld parent-directory bookmark(s).", parentBookmarks.count)
 
@@ -154,43 +152,5 @@ final class FinderSync: FIFinderSync {
         if let url = components.url {
             NSWorkspace.shared.open(url)
         }
-    }
-}
-
-private final class ScopedURLAccessSession {
-    private let urls: [URL]
-    private var activeURLs: [URL] = []
-    private var isStopped = false
-
-    init(urls: [URL]) {
-        var seen = Set<String>()
-        self.urls = urls.compactMap { url in
-            let standardized = url.standardizedFileURL
-            let key = standardized.path
-            guard !seen.contains(key) else { return nil }
-            seen.insert(key)
-            return standardized
-        }
-    }
-
-    func startAccessing() -> Bool {
-        var success = true
-        for url in urls {
-            if url.startAccessingSecurityScopedResource() {
-                activeURLs.append(url)
-            } else {
-                success = false
-            }
-        }
-        return success
-    }
-
-    func stopAccessing() {
-        guard !isStopped else { return }
-        isStopped = true
-        for url in activeURLs {
-            url.stopAccessingSecurityScopedResource()
-        }
-        activeURLs.removeAll()
     }
 }
