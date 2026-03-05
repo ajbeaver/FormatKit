@@ -4,9 +4,17 @@ import Foundation
 
 final class FinderSync: FIFinderSync {
     private let controller = FIFinderSyncController.default()
-    private let requestStore: RequestStore? = try? AppGroupTransferRequestStore()
+    private let requestStore: RequestStore?
+    private let requestStoreInitError: String?
 
     override init() {
+        do {
+            requestStore = try AppGroupTransferRequestStore()
+            requestStoreInitError = nil
+        } catch {
+            requestStore = nil
+            requestStoreInitError = error.localizedDescription
+        }
         super.init()
         controller.directoryURLs = Set([URL(fileURLWithPath: "/")])
     }
@@ -37,17 +45,7 @@ final class FinderSync: FIFinderSync {
         let urls = selectedFileURLs()
         guard !urls.isEmpty else { return }
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
-
-        guard
-            let requestStore,
-            let requestId = persistTransferRequest(action: .archive, urls: urls, requestStore: requestStore),
-            let components = requestURLComponents(action: .archive, requestId: requestId),
-            let url = components.url
-        else {
-            return
-        }
-
-        NSWorkspace.shared.open(url)
+        submitRequest(action: .archive, urls: urls)
     }
 
     @objc private func handleConvert(_ sender: Any?) {
@@ -55,41 +53,63 @@ final class FinderSync: FIFinderSync {
         guard !urls.isEmpty else { return }
         guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else { return }
         guard AudioSelectionGate.allSupportedAudio(urls: urls) || VideoSelectionGate.isSingleSupportedVideo(urls: urls) else { return }
-
-        guard
-            let requestStore,
-            let requestId = persistTransferRequest(action: .convert, urls: urls, requestStore: requestStore),
-            let components = requestURLComponents(action: .convert, requestId: requestId),
-            let url = components.url
-        else {
-            return
-        }
-
-        NSWorkspace.shared.open(url)
+        submitRequest(action: .convert, urls: urls)
     }
 
     private func selectedFileURLs() -> [URL] {
         (controller.selectedItemURLs() ?? []).filter(\.isFileURL)
     }
 
-    private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) -> UUID? {
+    private func submitRequest(action: TransferAction, urls: [URL]) {
+        guard let requestStore else {
+            notifyFailure(
+                action: action,
+                message: requestStoreInitError ?? "Secure request store unavailable in Finder extension."
+            )
+            return
+        }
+
+        let requestId: UUID
+        do {
+            requestId = try persistTransferRequest(action: action, urls: urls, requestStore: requestStore)
+        } catch {
+            notifyFailure(action: action, message: error.localizedDescription)
+            return
+        }
+
+        guard
+            let components = requestURLComponents(action: action, requestId: requestId),
+            let url = components.url
+        else {
+            notifyFailure(action: action, message: "Could not build app request URL.")
+            return
+        }
+
+        NSWorkspace.shared.open(url)
+    }
+
+    private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) throws -> UUID {
         let scopedSession = ScopedURLAccessSession(urls: urls)
         guard scopedSession.startAccessing() else {
             scopedSession.stopAccessing()
-            return nil
+            throw TransferRequestStoreError.ioFailure("Could not start security-scoped access for selected items.")
         }
         defer { scopedSession.stopAccessing() }
 
         let itemBookmarks = urls.compactMap {
             try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         }
-        guard itemBookmarks.count == urls.count else { return nil }
+        guard itemBookmarks.count == urls.count else {
+            throw TransferRequestStoreError.ioFailure("Could not create selected item bookmarks.")
+        }
 
         let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
         let parentBookmarks = parentURLs.compactMap {
             try? $0.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
         }
-        guard parentBookmarks.count == parentURLs.count else { return nil }
+        guard parentBookmarks.count == parentURLs.count else {
+            throw TransferRequestStoreError.ioFailure("Could not create parent directory bookmarks.")
+        }
 
         let request = TransferRequest(
             version: TransferRequestDefaults.schemaVersion,
@@ -99,13 +119,9 @@ final class FinderSync: FIFinderSync {
             selectedItemBookmarks: itemBookmarks,
             parentDirectoryBookmarks: parentBookmarks
         )
-        do {
-            try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
-            try requestStore.save(request)
-            return request.requestId
-        } catch {
-            return nil
-        }
+        try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
+        try requestStore.save(request)
+        return request.requestId
     }
 
     private func requestURLComponents(action: TransferAction, requestId: UUID) -> URLComponents? {
@@ -114,6 +130,19 @@ final class FinderSync: FIFinderSync {
         components.host = action.rawValue
         components.queryItems = [URLQueryItem(name: "requestId", value: requestId.uuidString)]
         return components
+    }
+
+    private func notifyFailure(action: TransferAction, message: String) {
+        var components = URLComponents()
+        components.scheme = "formatkit"
+        components.host = "error"
+        components.queryItems = [
+            URLQueryItem(name: "action", value: action.rawValue),
+            URLQueryItem(name: "message", value: message)
+        ]
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
+        }
     }
 }
 

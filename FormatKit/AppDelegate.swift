@@ -76,10 +76,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard
             url.scheme?.lowercased() == "formatkit",
             let rawAction = url.host?.lowercased(),
-            let action = TransferAction(rawValue: rawAction),
             let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         else {
             presentErrorAndMaybeTerminate(title: "Invalid Request", message: "The request URL was malformed.")
+            return
+        }
+
+        if rawAction == "error" {
+            let actionName = components.queryItems?.first(where: { $0.name == "action" })?.value?.uppercased() ?? "OPERATION"
+            let message = components.queryItems?.first(where: { $0.name == "message" })?.value ?? "Unknown error."
+            presentErrorAndMaybeTerminate(title: "\(actionName) Request Failed", message: message)
+            return
+        }
+
+        guard let action = TransferAction(rawValue: rawAction) else {
+            presentErrorAndMaybeTerminate(title: "Invalid Request", message: "Unsupported action: \(rawAction)")
             return
         }
 
