@@ -95,6 +95,24 @@ final class FinderSync: FIFinderSync {
     }
 
     private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) throws -> UUID {
+        var startedScopeURLs: [URL] = []
+        var seen = Set<String>()
+        for url in urls {
+            let standardized = url.standardizedFileURL
+            let key = standardized.path
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            if standardized.startAccessingSecurityScopedResource() {
+                startedScopeURLs.append(standardized)
+            }
+        }
+        defer {
+            for url in startedScopeURLs {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        NSLog("FormatKitFinderExtension started scope for %ld of %ld selected item(s).", startedScopeURLs.count, urls.count)
+
         var itemBookmarks: [Data] = []
         for url in urls {
             do {
