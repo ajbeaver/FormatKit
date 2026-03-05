@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import AVFoundation
 import FinderSync
 import Foundation
+import ImageIO
 import SwiftUI
 
 @MainActor
@@ -188,6 +189,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if handleVideoConvertRequestIfNeeded(urls: request.selection, securityScope: request.securityScope) {
             return
         }
+        if handleImageConvertRequestIfNeeded(urls: request.selection, securityScope: request.securityScope) {
+            return
+        }
 
         let selection = request.selection
         do {
@@ -275,6 +279,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private func handleImageConvertRequestIfNeeded(urls: [URL], securityScope: SecurityScopedAccessSession?) -> Bool {
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: urls) else {
+            return false
+        }
+        guard ImageSelectionGate.allSupportedImages(urls: urls) else {
+            return false
+        }
+
+        do {
+            _ = try validateImageSelection(urls: urls)
+        } catch {
+            securityScope?.stopAccessing()
+            presentErrorAndMaybeTerminate(title: "Convert Failed", message: error.localizedDescription)
+            return true
+        }
+
+        guard let inputFormats = ImageSelectionGate.inputFormats(for: urls) else {
+            securityScope?.stopAccessing()
+            presentErrorAndMaybeTerminate(title: "Invalid Selection", message: "All selected items must be supported image files (JPEG, PNG, HEIC, TIFF).")
+            return true
+        }
+
+        let allowedOutputs = ImageConversionMatrix.allowedOutputs(
+            for: inputFormats,
+            supportedBySystem: Self.availableImageOutputFormats()
+        )
+        guard !allowedOutputs.isEmpty else {
+            securityScope?.stopAccessing()
+            presentErrorAndMaybeTerminate(
+                title: "Convert not available for this selection.",
+                message: "No available output formats for the selected image files on this system."
+            )
+            return true
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        guard let outputFormat = presentImageConvertModal(allowedFormats: allowedOutputs) else {
+            securityScope?.stopAccessing()
+            NSApp.terminate(nil)
+            return true
+        }
+
+        let job = ImageConvertJob(selection: urls, outputFormat: outputFormat, securityScope: securityScope)
+        startImageConverting(job)
+        return true
+    }
+
     private func validateCommonSelection(urls: [URL]) throws -> [URL] {
         guard !urls.isEmpty else {
             throw ValidationError.emptySelection
@@ -314,7 +365,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !resolvedItems.isEmpty else {
             throw ValidationError.invalidSelection("The request did not contain any selected items.")
         }
-        let securityScope = try buildDirectoryScope(for: resolvedItems, action: expectedAction)
+        let securityScope = try buildDirectoryScope(for: resolvedItems)
         NSLog("FormatKit resolved transfer request %@ with %ld selected item(s).", requestId.uuidString, resolvedItems.count)
         guard securityScope.startAccessing() else {
             securityScope.stopAccessing()
@@ -334,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return requestId
     }
 
-    private func buildDirectoryScope(for selection: [URL], action: TransferAction) throws -> SecurityScopedAccessSession {
+    private func buildDirectoryScope(for selection: [URL]) throws -> SecurityScopedAccessSession {
         let requiredDirectories = Set(selection.map { $0.deletingLastPathComponent().standardizedFileURL })
         var scopeDirectories: [URL] = []
         for requiredDirectory in requiredDirectories {
@@ -342,7 +393,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let existing = try directoryAccessStore.lookupCoveringDirectory(for: requiredDirectory) {
                 grantedDirectory = existing
             } else {
-                let chosenDirectory = try requestDirectoryAccess(for: requiredDirectory, action: action)
+                let chosenDirectory = try requestDirectoryAccess(for: requiredDirectory)
                 try directoryAccessStore.store(directoryURL: chosenDirectory)
                 guard let resolved = try directoryAccessStore.lookupCoveringDirectory(for: requiredDirectory) else {
                     throw ValidationError.invalidSelection("Could not restore granted folder access for \(requiredDirectory.path).")
@@ -359,7 +410,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return SecurityScopedAccessSession(urls: scopeDirectories)
     }
 
-    private func requestDirectoryAccess(for requiredDirectory: URL, action: TransferAction) throws -> URL {
+    private func requestDirectoryAccess(for requiredDirectory: URL) throws -> URL {
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -367,8 +418,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.directoryURL = requiredDirectory
-        panel.message = "Grant FormatKit access to the folder that contains the selected item for \(action.rawValue)."
-        panel.prompt = "Grant Access"
+        panel.message = "FormatKit needs folder access to create output next to the selected file. Choose this folder or a parent folder to reduce future prompts."
+        panel.prompt = "Open"
 
         guard panel.runModal() == .OK, let chosenDirectory = panel.url?.standardizedFileURL else {
             throw ValidationError.invalidSelection("Folder access was not granted.")
@@ -382,8 +433,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     fileprivate static func directory(_ grantedDirectory: URL, covers requiredDirectory: URL) -> Bool {
-        let grantedPath = grantedDirectory.standardizedFileURL.path
-        let requiredPath = requiredDirectory.standardizedFileURL.path
+        let grantedPath = grantedDirectory.standardizedFileURL.resolvingSymlinksInPath().path
+        let requiredPath = requiredDirectory.standardizedFileURL.resolvingSymlinksInPath().path
         if grantedPath == "/" {
             return requiredPath.hasPrefix("/")
         }
@@ -421,6 +472,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return validatedURLs
     }
 
+    private func validateImageSelection(urls: [URL]) throws -> [URL] {
+        let validatedURLs = try validateCommonSelection(urls: urls)
+        guard !ArchiveSelectionGate.containsArchivedItem(urls: validatedURLs) else {
+            throw ValidationError.invalidSelection("Selection contains an archived item.")
+        }
+        guard ImageSelectionGate.allSupportedImages(urls: validatedURLs) else {
+            throw ValidationError.invalidSelection("All selected items must be supported image files (JPEG, PNG, HEIC, TIFF).")
+        }
+        return validatedURLs
+    }
+
     private func validateVideoAssetPreflight(sourceURL: URL) throws {
         let asset = AVURLAsset(url: sourceURL)
         let videoTracks = loadVideoTracksSync(from: asset)
@@ -430,58 +492,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func presentCompressModal() -> ArchiveFormat? {
-        let formats = ArchiveFormat.allCases
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
-        popup.addItems(withTitles: formats.map(\.pickerDisplayName))
-        popup.selectItem(at: 0)
-
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Archive"
-        alert.informativeText = "Choose a format."
-        alert.accessoryView = popup
-        alert.addButton(withTitle: "Archive")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let title = popup.titleOfSelectedItem ?? ""
-        return ArchiveFormat.fromPickerDisplayName(title) ?? .zip
+        ArchiveOptionsPanel.present()
     }
 
     private func presentConvertModal(allowedFormats: [AudioOutputFormat]) -> AudioOutputFormat? {
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
-        popup.addItems(withTitles: allowedFormats.map(\.displayName))
-        popup.selectItem(at: 0)
-
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Convert"
-        alert.informativeText = "Choose a format."
-        alert.accessoryView = popup
-        alert.addButton(withTitle: "Convert")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let title = popup.titleOfSelectedItem ?? ""
-        return allowedFormats.first(where: { $0.displayName == title })
+        ConvertOptionsPanel.presentAudio(allowedFormats: allowedFormats)
     }
 
     private func presentVideoConvertModal(allowedFormats options: [VideoOutputFormat]) -> VideoOutputFormat? {
-        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 180, height: 28), pullsDown: false)
-        popup.addItems(withTitles: options.map(\.displayName))
-        popup.selectItem(at: 0)
+        ConvertOptionsPanel.presentVideo(allowedFormats: options)
+    }
 
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = "Convert"
-        alert.informativeText = "Choose a format."
-        alert.accessoryView = popup
-        alert.addButton(withTitle: "Convert")
-        alert.addButton(withTitle: "Cancel")
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let title = popup.titleOfSelectedItem ?? ""
-        return options.first(where: { $0.displayName == title })
+    private func presentImageConvertModal(allowedFormats options: [ImageOutputFormat]) -> ImageOutputFormat? {
+        ConvertOptionsPanel.presentImage(allowedFormats: options)
     }
 
     private func startArchiving(_ job: ArchiveJob) {
@@ -528,6 +551,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         compressionQueue.async { [job] in
             let result = Self.runVideoConversion(job)
+            DispatchQueue.main.async {
+                job.securityScope?.stopAccessing()
+                self.progressWindowController?.close()
+                self.progressWindowController = nil
+                self.isArchiving = false
+                self.presentConvertCompletion(for: result)
+            }
+        }
+    }
+
+    private func startImageConverting(_ job: ImageConvertJob) {
+        isArchiving = true
+        let progressWindowController = ArchivingProgressWindowController(statusText: "Converting")
+        self.progressWindowController = progressWindowController
+        progressWindowController.show()
+
+        compressionQueue.async { [job] in
+            let result = Self.runImageConversions(job)
             DispatchQueue.main.async {
                 job.securityScope?.stopAccessing()
                 self.progressWindowController?.close()
@@ -706,7 +747,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    nonisolated private static func runImageConversions(_ job: ImageConvertJob) -> ConvertRunResult {
+        var outputURLs: [URL] = []
+        for task in job.tasks {
+            let singleResult = runSingleImageConversion(task)
+            switch singleResult {
+            case .success(let outputURL):
+                outputURLs.append(outputURL)
+            case .failure(let details):
+                return .failure(details)
+            }
+        }
+        return .success(outputURLs)
+    }
+
     nonisolated private static func runSingleVideoConversion(_ job: VideoConvertJob) -> ConvertSingleResult {
+        if job.outputFormat == .gif {
+            return runSingleVideoToGIFConversion(job)
+        }
+
         let asset = AVURLAsset(url: job.sourceURL)
         let presetName = videoExportPresetName(sourceURL: job.sourceURL, outputFormat: job.outputFormat)
 
@@ -760,6 +819,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
             )
         }
+    }
+
+    nonisolated private static func runSingleVideoToGIFConversion(_ job: VideoConvertJob) -> ConvertSingleResult {
+        let asset = AVURLAsset(url: job.sourceURL)
+        let durationSeconds = CMTimeGetSeconds(asset.duration)
+        guard VideoGIFConstraints.isSupportedDuration(durationSeconds) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "GIF conversion supports videos up to 10 seconds. Please trim the video and try again.",
+                    diagnosticOutput: "GIF duration check failed: \(durationSeconds)s"
+                )
+            )
+        }
+
+        let startedAt = Date()
+        let frameTimes = gifFrameTimes(durationSeconds: durationSeconds)
+        var lastOversizedBytes: Int64 = 0
+        for maxDimension in VideoGIFConstraints.fallbackPixelDimensions {
+            switch encodeVideoToGIF(
+                asset: asset,
+                outputURL: job.outputURL,
+                frameTimes: frameTimes,
+                maxDimension: maxDimension,
+                startedAt: startedAt
+            ) {
+            case .success:
+                return .success(job.outputURL)
+            case .oversized(let bytes):
+                lastOversizedBytes = bytes
+                continue
+            case .timedOut:
+                return .failure(
+                    ConvertFailureDetails(
+                        userFacingMessage: "GIF conversion took too long and was stopped. Please try a shorter or smaller video.",
+                        diagnosticOutput: "GIF conversion timed out after \(VideoGIFConstraints.timeoutSeconds)s."
+                    )
+                )
+            case .failure(let details):
+                return .failure(details)
+            }
+        }
+
+        try? FileManager.default.removeItem(at: job.outputURL)
+        return .failure(
+            ConvertFailureDetails(
+                userFacingMessage: "The GIF would be too large to be practical. Please use a shorter or smaller video and try again.",
+                diagnosticOutput: "GIF output size \(lastOversizedBytes) exceeded limit \(VideoGIFConstraints.maxOutputBytes)."
+            )
+        )
     }
 
     nonisolated private static func runSingleConversion(_ task: ConvertTask) -> ConvertSingleResult {
@@ -896,6 +1004,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    nonisolated private static func runSingleImageConversion(_ task: ImageConvertTask) -> ConvertSingleResult {
+        let sourcePath = task.sourceURL.path as CFString
+        guard let source = CGImageSourceCreateWithURL(task.sourceURL as CFURL, nil) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\nThe source image could not be opened.",
+                    diagnosticOutput: "CGImageSourceCreateWithURL returned nil for \(task.sourceURL.path)"
+                )
+            )
+        }
+        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\nThe source image data is invalid.",
+                    diagnosticOutput: "CGImageSourceCreateImageAtIndex returned nil for \(sourcePath)"
+                )
+            )
+        }
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            task.outputURL as CFURL,
+            task.outputFormat.destinationUTTypeIdentifier as CFString,
+            1,
+            nil
+        ) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\nThe selected output format is not available on this system.",
+                    diagnosticOutput: "CGImageDestinationCreateWithURL returned nil for UTI \(task.outputFormat.destinationUTTypeIdentifier)"
+                )
+            )
+        }
+
+        let metadata = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+        CGImageDestinationAddImage(destination, image, metadata)
+        guard CGImageDestinationFinalize(destination) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert \(task.sourceURL.lastPathComponent).\n\nImage export did not complete successfully.",
+                    diagnosticOutput: "CGImageDestinationFinalize returned false for \(task.outputURL.path)"
+                )
+            )
+        }
+
+        guard isValidOutputFile(at: task.outputURL) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Convert finished, but the output file was missing or empty.",
+                    diagnosticOutput: task.outputURL.path
+                )
+            )
+        }
+        return .success(task.outputURL)
+    }
+
     nonisolated private static func isValidOutputFile(at url: URL) -> Bool {
         let fileManager = FileManager.default
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path) else { return false }
@@ -930,12 +1093,126 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     nonisolated private static func availableVideoOutputFormats(for sourceURL: URL) -> [VideoOutputFormat] {
         let asset = AVURLAsset(url: sourceURL)
         return VideoOutputFormat.allCases.filter { outputFormat in
+            if outputFormat == .gif {
+                return supportsGIFOutput()
+            }
             let presetName = videoExportPresetName(sourceURL: sourceURL, outputFormat: outputFormat)
             guard let session = AVAssetExportSession(asset: asset, presetName: presetName) else {
                 return false
             }
             return session.supportedFileTypes.contains(outputFormat.avFileType)
         }
+    }
+
+    nonisolated private static func supportsGIFOutput() -> Bool {
+        let availableTypeIdentifiers = (CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? []
+        return availableTypeIdentifiers.contains("com.compuserve.gif")
+    }
+
+    nonisolated private static func gifFrameTimes(durationSeconds: Double) -> [CMTime] {
+        let interval = VideoGIFConstraints.frameDelaySeconds
+        let frameCount = max(1, Int(floor(durationSeconds / interval)))
+        return (0..<frameCount).map { index in
+            let seconds = min(Double(index) * interval, max(durationSeconds - 0.001, 0))
+            return CMTime(seconds: seconds, preferredTimescale: 600)
+        }
+    }
+
+    nonisolated private static func encodeVideoToGIF(
+        asset: AVAsset,
+        outputURL: URL,
+        frameTimes: [CMTime],
+        maxDimension: CGFloat,
+        startedAt: Date
+    ) -> GIFEncodeAttemptResult {
+        try? FileManager.default.removeItem(at: outputURL)
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxDimension, height: maxDimension)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            outputURL as CFURL,
+            "com.compuserve.gif" as CFString,
+            0,
+            nil
+        ) else {
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert video to GIF.\n\nGIF export is not available on this system.",
+                    diagnosticOutput: "CGImageDestinationCreateWithURL returned nil for GIF destination."
+                )
+            )
+        }
+
+        let gifProperties: [CFString: Any] = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFLoopCount: 0
+            ]
+        ]
+        CGImageDestinationSetProperties(destination, gifProperties as CFDictionary)
+
+        let frameProperties: [CFString: Any] = [
+            kCGImagePropertyGIFDictionary: [
+                kCGImagePropertyGIFDelayTime: VideoGIFConstraints.frameDelaySeconds
+            ]
+        ]
+
+        for frameTime in frameTimes {
+            if Date().timeIntervalSince(startedAt) > VideoGIFConstraints.timeoutSeconds {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .timedOut
+            }
+
+            do {
+                let image = try generator.copyCGImage(at: frameTime, actualTime: nil)
+                CGImageDestinationAddImage(destination, image, frameProperties as CFDictionary)
+            } catch {
+                try? FileManager.default.removeItem(at: outputURL)
+                return .failure(
+                    ConvertFailureDetails(
+                        userFacingMessage: "Failed to convert video to GIF.\n\nThe video frames could not be processed.",
+                        diagnosticOutput: String(describing: error)
+                    )
+                )
+            }
+        }
+
+        guard CGImageDestinationFinalize(destination) else {
+            try? FileManager.default.removeItem(at: outputURL)
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Failed to convert video to GIF.\n\nGIF export did not complete successfully.",
+                    diagnosticOutput: "CGImageDestinationFinalize returned false for \(outputURL.path)"
+                )
+            )
+        }
+
+        guard isValidOutputFile(at: outputURL) else {
+            try? FileManager.default.removeItem(at: outputURL)
+            return .failure(
+                ConvertFailureDetails(
+                    userFacingMessage: "Convert finished, but the output file was missing or empty.",
+                    diagnosticOutput: outputURL.path
+                )
+            )
+        }
+
+        let fileSize = (try? FileManager.default.attributesOfItem(atPath: outputURL.path)[.size] as? NSNumber)?.int64Value ?? 0
+        if fileSize > VideoGIFConstraints.maxOutputBytes {
+            try? FileManager.default.removeItem(at: outputURL)
+            return .oversized(fileSize)
+        }
+
+        return .success
+    }
+
+    nonisolated private static func availableImageOutputFormats() -> [ImageOutputFormat] {
+        let availableTypeIdentifiers = (CGImageDestinationCopyTypeIdentifiers() as? [String]) ?? []
+        let availableSet = Set(availableTypeIdentifiers)
+        return ImageOutputFormat.allCases.filter { availableSet.contains($0.destinationUTTypeIdentifier) }
     }
 
     nonisolated private static func diagnosticSnippet(from text: String, maxLines: Int = 20) -> String {
@@ -1145,7 +1422,7 @@ final class DirectoryAccessStore {
     }
 
     func lookupCoveringDirectory(for requiredDirectory: URL) throws -> URL? {
-        let required = requiredDirectory.standardizedFileURL
+        let required = canonicalize(requiredDirectory)
         var bookmarkMap = rawBookmarkMap()
         var changed = false
         var resolvedPairs: [(path: String, url: URL)] = []
@@ -1153,12 +1430,13 @@ final class DirectoryAccessStore {
         for (key, bookmarkData) in bookmarkMap {
             do {
                 let resolved = try resolveBookmark(bookmarkData)
-                guard resolved.path == key else {
+                let resolvedPath = canonicalize(resolved).path
+                guard resolvedPath == key else {
                     bookmarkMap.removeValue(forKey: key)
                     changed = true
                     continue
                 }
-                resolvedPairs.append((key, resolved))
+                resolvedPairs.append((key, canonicalize(resolved)))
             } catch {
                 bookmarkMap.removeValue(forKey: key)
                 changed = true
@@ -1176,14 +1454,14 @@ final class DirectoryAccessStore {
     }
 
     func store(directoryURL: URL) throws {
-        let standardized = directoryURL.standardizedFileURL
-        let bookmarkData = try standardized.bookmarkData(
+        let canonical = canonicalize(directoryURL)
+        let bookmarkData = try canonical.bookmarkData(
             options: [.withSecurityScope],
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
         var bookmarkMap = rawBookmarkMap()
-        bookmarkMap[standardized.path] = bookmarkData
+        bookmarkMap[canonical.path] = bookmarkData
         defaults.set(bookmarkMap, forKey: Self.storageKey)
     }
 
@@ -1203,6 +1481,10 @@ final class DirectoryAccessStore {
             throw TransferRequestStoreError.staleRequest
         }
         return url
+    }
+
+    private func canonicalize(_ url: URL) -> URL {
+        url.standardizedFileURL.resolvingSymlinksInPath()
     }
 }
 
@@ -1366,6 +1648,32 @@ private struct ConvertTask {
     let outputFormat: AudioOutputFormat
 }
 
+private struct ImageConvertJob {
+    let selection: [URL]
+    let outputFormat: ImageOutputFormat
+    let tasks: [ImageConvertTask]
+    let securityScope: SecurityScopedAccessSession?
+
+    init(selection: [URL], outputFormat: ImageOutputFormat, securityScope: SecurityScopedAccessSession?) {
+        self.selection = selection
+        self.outputFormat = outputFormat
+        self.securityScope = securityScope
+        self.tasks = selection.map {
+            ImageConvertTask(
+                sourceURL: $0,
+                outputURL: ImageConvertNameBuilder.outputURL(for: $0, outputFormat: outputFormat),
+                outputFormat: outputFormat
+            )
+        }
+    }
+}
+
+private struct ImageConvertTask {
+    let sourceURL: URL
+    let outputURL: URL
+    let outputFormat: ImageOutputFormat
+}
+
 private struct VideoConvertJob {
     let sourceURL: URL
     let outputFormat: VideoOutputFormat
@@ -1403,6 +1711,13 @@ private enum ConvertSingleResult {
 private struct ConvertFailureDetails {
     let userFacingMessage: String
     let diagnosticOutput: String
+}
+
+private enum GIFEncodeAttemptResult {
+    case success
+    case oversized(Int64)
+    case timedOut
+    case failure(ConvertFailureDetails)
 }
 
 private nonisolated struct ConvertOutputAudioConfiguration {
@@ -1579,6 +1894,8 @@ private extension VideoOutputFormat {
             return .mov
         case .m4v:
             return .m4v
+        case .gif:
+            return .mov
         }
     }
 
@@ -1589,6 +1906,8 @@ private extension VideoOutputFormat {
         case .mov:
             return .mov
         case .m4v:
+            return .mp4Family
+        case .gif:
             return .mp4Family
         }
     }

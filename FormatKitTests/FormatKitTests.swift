@@ -93,6 +93,36 @@ struct FormatKitTests {
         #expect(intersection == [.m4a, .wav])
     }
 
+    @Test func imageDetectionGatingOnlyAcceptsSupportedImageExtensions() {
+        let allImages = [
+            URL(fileURLWithPath: "/tmp/a.jpg"),
+            URL(fileURLWithPath: "/tmp/b.jpeg"),
+            URL(fileURLWithPath: "/tmp/c.png"),
+            URL(fileURLWithPath: "/tmp/d.heic"),
+            URL(fileURLWithPath: "/tmp/e.HEIF"),
+            URL(fileURLWithPath: "/tmp/f.tif"),
+            URL(fileURLWithPath: "/tmp/g.TIFF")
+        ]
+        #expect(ImageSelectionGate.allSupportedImages(urls: allImages))
+
+        let mixed = [
+            URL(fileURLWithPath: "/tmp/a.jpg"),
+            URL(fileURLWithPath: "/tmp/b.mp3")
+        ]
+        #expect(!ImageSelectionGate.allSupportedImages(urls: mixed))
+        #expect(ImageSelectionGate.inputFormats(for: mixed) == nil)
+    }
+
+    @Test func imageConversionMatrixExcludesInputFormatsAndRespectsSystemSupport() {
+        let supported: [ImageOutputFormat] = [.jpeg, .png, .heic, .tiff]
+        #expect(ImageConversionMatrix.allowedOutputs(for: [.jpeg], supportedBySystem: supported) == [.png, .heic, .tiff])
+        #expect(ImageConversionMatrix.allowedOutputs(for: [.jpeg, .png], supportedBySystem: supported) == [.heic, .tiff])
+
+        let noHeicSupport: [ImageOutputFormat] = [.jpeg, .png, .tiff]
+        #expect(ImageConversionMatrix.allowedOutputs(for: [.png], supportedBySystem: noHeicSupport) == [.jpeg, .tiff])
+        #expect(ImageConversionMatrix.allowedOutputs(for: [.heic], supportedBySystem: noHeicSupport) == [.jpeg, .png, .tiff])
+    }
+
     @Test func convertOutputNamingIsCollisionSafe() throws {
         let fileManager = FileManager.default
         let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -110,16 +140,61 @@ struct FormatKitTests {
         #expect(m4aCollision.lastPathComponent == "song 2.m4a")
     }
 
+    @Test func imageConvertOutputNamingIsCollisionSafe() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let source = tempRoot.appendingPathComponent("photo.heic")
+        try Data("x".utf8).write(to: source)
+
+        let pngURL = ImageConvertNameBuilder.outputURL(for: source, outputFormat: .png, fileManager: fileManager)
+        #expect(pngURL.lastPathComponent == "photo.png")
+        try Data("occupied".utf8).write(to: pngURL)
+
+        let pngCollision = ImageConvertNameBuilder.outputURL(for: source, outputFormat: .png, fileManager: fileManager)
+        #expect(pngCollision.lastPathComponent == "photo 2.png")
+    }
+
     @Test func videoOutputOptionsHideSameContainer() {
-        let supported: [VideoOutputFormat] = [.mp4, .mov, .m4v]
-        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mp4, supportedOutputs: supported) == [.mov, .m4v])
-        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported) == [.mp4, .m4v])
-        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .m4v, supportedOutputs: supported) == [.mp4, .mov])
+        let supported: [VideoOutputFormat] = [.mp4, .mov, .m4v, .gif]
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mp4, supportedOutputs: supported) == [.mov, .m4v, .gif])
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported) == [.mp4, .m4v, .gif])
+        #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .m4v, supportedOutputs: supported) == [.mp4, .mov, .gif])
+    }
+
+    @Test func videoOutputOptionsIncludeGifAsAlternative() {
+        let supported: [VideoOutputFormat] = [.mp4, .mov, .m4v, .gif]
+        let alternatives = VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mp4, supportedOutputs: supported)
+        #expect(alternatives.contains(.gif))
     }
 
     @Test func videoOutputOptionsCanBecomeEmptyAfterFiltering() {
         let supported: [VideoOutputFormat] = [.mov]
         #expect(VideoOutputOptionFilter.alternativeOutputs(sourceInput: .mov, supportedOutputs: supported).isEmpty)
+    }
+
+    @Test func videoConvertNameBuilderSupportsGifCollisionSafety() throws {
+        let fileManager = FileManager.default
+        let tempRoot = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempRoot, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempRoot) }
+
+        let source = tempRoot.appendingPathComponent("clip.mov")
+        try Data("x".utf8).write(to: source)
+
+        let gifURL = VideoConvertNameBuilder.outputURL(for: source, outputFormat: .gif, fileManager: fileManager)
+        #expect(gifURL.lastPathComponent == "clip.gif")
+        try Data("occupied".utf8).write(to: gifURL)
+
+        let gifCollision = VideoConvertNameBuilder.outputURL(for: source, outputFormat: .gif, fileManager: fileManager)
+        #expect(gifCollision.lastPathComponent == "clip 2.gif")
+    }
+
+    @Test func videoGifDurationLimitValidation() {
+        #expect(VideoGIFConstraints.isSupportedDuration(10.0))
+        #expect(!VideoGIFConstraints.isSupportedDuration(10.01))
     }
 
     @Test func transferRequestStoreRoundtripSaveAndTake() throws {
@@ -310,5 +385,31 @@ struct FormatKitTests {
 
         seedMap = defaults.dictionary(forKey: DirectoryAccessStore.storageKey) as? [String: Data] ?? [:]
         #expect(seedMap["/invalid/path"] == nil)
+    }
+
+    @Test func directoryAccessStoreCanonicalizesSymlinkedDirectories() throws {
+        let suiteName = "FormatKitTests.DirectoryAccessStore.Symlink.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let realDirectory = root.appendingPathComponent("real", isDirectory: true)
+        let symlinkDirectory = root.appendingPathComponent("link", isDirectory: true)
+        try fileManager.createDirectory(at: realDirectory, withIntermediateDirectories: true)
+        try fileManager.createSymbolicLink(at: symlinkDirectory, withDestinationURL: realDirectory)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let store = DirectoryAccessStore(defaults: defaults)
+        try store.store(directoryURL: symlinkDirectory)
+
+        let raw = defaults.dictionary(forKey: DirectoryAccessStore.storageKey) as? [String: Data] ?? [:]
+        #expect(raw.keys.contains(realDirectory.standardizedFileURL.resolvingSymlinksInPath().path))
+        #expect(!raw.keys.contains(symlinkDirectory.standardizedFileURL.path))
+
+        let lookupTarget = realDirectory.appendingPathComponent("file.txt")
+        let matched = try store.lookupCoveringDirectory(for: lookupTarget.deletingLastPathComponent())
+        #expect(matched?.resolvingSymlinksInPath().path == realDirectory.resolvingSymlinksInPath().path)
     }
 }

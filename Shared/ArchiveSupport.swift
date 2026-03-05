@@ -141,6 +141,117 @@ enum AudioInputFormat: String, CaseIterable {
     }
 }
 
+enum ImageInputFormat: String, CaseIterable {
+    case jpeg
+    case png
+    case heic
+    case tiff
+
+    nonisolated static func fromURL(_ url: URL) -> ImageInputFormat? {
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            return .jpeg
+        case "png":
+            return .png
+        case "heic", "heif":
+            return .heic
+        case "tif", "tiff":
+            return .tiff
+        default:
+            return nil
+        }
+    }
+}
+
+enum ImageOutputFormat: String, CaseIterable {
+    case jpeg
+    case png
+    case heic
+    case tiff
+
+    nonisolated var displayName: String {
+        switch self {
+        case .jpeg: return "JPEG"
+        case .png: return "PNG"
+        case .heic: return "HEIC"
+        case .tiff: return "TIFF"
+        }
+    }
+
+    nonisolated var fileExtension: String {
+        switch self {
+        case .jpeg: return "jpg"
+        case .png: return "png"
+        case .heic: return "heic"
+        case .tiff: return "tiff"
+        }
+    }
+
+    nonisolated var destinationUTTypeIdentifier: String {
+        switch self {
+        case .jpeg: return "public.jpeg"
+        case .png: return "public.png"
+        case .heic: return "public.heic"
+        case .tiff: return "public.tiff"
+        }
+    }
+}
+
+enum ImageSelectionGate {
+    nonisolated static func allSupportedImages(urls: [URL]) -> Bool {
+        guard !urls.isEmpty else { return false }
+        return urls.allSatisfy { ImageInputFormat.fromURL($0) != nil }
+    }
+
+    nonisolated static func inputFormats(for urls: [URL]) -> [ImageInputFormat]? {
+        let formats = urls.compactMap(ImageInputFormat.fromURL(_:))
+        guard formats.count == urls.count else { return nil }
+        return formats
+    }
+}
+
+enum ImageConversionMatrix {
+    nonisolated static func allowedOutputs(for inputs: [ImageInputFormat], supportedBySystem: [ImageOutputFormat]) -> [ImageOutputFormat] {
+        guard !inputs.isEmpty else { return [] }
+        let blockedOutputs = Set(inputs.map(outputFormat(from:)))
+        return supportedBySystem.filter { !blockedOutputs.contains($0) }
+    }
+
+    nonisolated private static func outputFormat(from input: ImageInputFormat) -> ImageOutputFormat {
+        switch input {
+        case .jpeg: return .jpeg
+        case .png: return .png
+        case .heic: return .heic
+        case .tiff: return .tiff
+        }
+    }
+}
+
+enum ImageConvertNameBuilder {
+    nonisolated static func outputURL(for sourceURL: URL, outputFormat: ImageOutputFormat, fileManager: FileManager = .default) -> URL {
+        let directory = sourceURL.deletingLastPathComponent()
+        let stem = sourceURL.deletingPathExtension().lastPathComponent
+        return uniqueOutputURL(directory: directory, baseName: stem, outputFormat: outputFormat, fileManager: fileManager)
+    }
+
+    nonisolated private static func uniqueOutputURL(
+        directory: URL,
+        baseName: String,
+        outputFormat: ImageOutputFormat,
+        fileManager: FileManager
+    ) -> URL {
+        var attempt = 0
+        while true {
+            let suffix = attempt == 0 ? "" : " \(attempt + 1)"
+            let candidate = directory.appendingPathComponent("\(baseName)\(suffix).\(outputFormat.fileExtension)")
+            if !fileManager.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            attempt += 1
+        }
+    }
+}
+
 enum AudioOutputFormat: String, CaseIterable {
     case mp3
     case m4a
@@ -237,6 +348,7 @@ enum VideoOutputFormat: String, CaseIterable {
     case mp4
     case mov
     case m4v
+    case gif
 
     nonisolated var displayName: String { rawValue.uppercased() }
     nonisolated var fileExtension: String { rawValue }
@@ -247,6 +359,21 @@ enum VideoOutputFormat: String, CaseIterable {
         case .mov: return .mov
         case .m4v: return .m4v
         }
+    }
+}
+
+enum VideoGIFConstraints {
+    nonisolated static let maxDurationSeconds: Double = 10.0
+    nonisolated static let fps: Double = 10.0
+    nonisolated static let maxPixelDimension: CGFloat = 720.0
+    nonisolated static let fallbackPixelDimensions: [CGFloat] = [720.0, 540.0, 480.0]
+    nonisolated static let maxOutputBytes: Int64 = 25 * 1024 * 1024
+    nonisolated static let timeoutSeconds: TimeInterval = 30.0
+    nonisolated static let frameDelaySeconds: Double = 1.0 / fps
+
+    nonisolated static func isSupportedDuration(_ durationSeconds: Double) -> Bool {
+        guard durationSeconds.isFinite, durationSeconds >= 0 else { return false }
+        return durationSeconds <= maxDurationSeconds
     }
 }
 
