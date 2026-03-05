@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
     private let requestStore: RequestStore? = try? AppGroupTransferRequestStore()
     private let directoryAccessStore = DirectoryAccessStore()
+    private var pendingIdleTerminationWorkItem: DispatchWorkItem?
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
     private var settingsWindowController: SettingsWindowController?
@@ -31,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 return
             }
+            let workItem = DispatchWorkItem {
+                NSApp.terminate(nil)
+            }
+            pendingIdleTerminationWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0, execute: workItem)
             return
         }
 
@@ -38,6 +44,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
+        pendingIdleTerminationWorkItem?.cancel()
+        pendingIdleTerminationWorkItem = nil
         guard let firstURL = urls.first else { return }
         handleIncomingURL(firstURL)
     }
@@ -336,7 +344,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else {
                 let chosenDirectory = try requestDirectoryAccess(for: requiredDirectory, action: action)
                 try directoryAccessStore.store(directoryURL: chosenDirectory)
-                grantedDirectory = chosenDirectory
+                guard let resolved = try directoryAccessStore.lookupCoveringDirectory(for: requiredDirectory) else {
+                    throw ValidationError.invalidSelection("Could not restore granted folder access for \(requiredDirectory.path).")
+                }
+                grantedDirectory = resolved
             }
             scopeDirectories.append(grantedDirectory)
         }
@@ -605,11 +616,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
+        let diagnosticsLock = NSLock()
+        var stdoutData = Data()
+        var stderrData = Data()
+        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            diagnosticsLock.lock()
+            stdoutData.append(chunk)
+            diagnosticsLock.unlock()
+        }
+        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            diagnosticsLock.lock()
+            stderrData.append(chunk)
+            diagnosticsLock.unlock()
+        }
 
         do {
             try process.run()
             process.waitUntilExit()
         } catch {
+            stdoutPipe.fileHandleForReading.readabilityHandler = nil
+            stderrPipe.fileHandleForReading.readabilityHandler = nil
             return .failure(
                 ArchiveFailureDetails(
                     userFacingMessage: "Failed to launch the archive tool: \(error.localizedDescription)",
@@ -618,8 +648,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let stdout = decodedDiagnosticOutput(from: stdoutPipe.fileHandleForReading.readDataToEndOfFile())
-        let stderr = decodedDiagnosticOutput(from: stderrPipe.fileHandleForReading.readDataToEndOfFile())
+        stdoutPipe.fileHandleForReading.readabilityHandler = nil
+        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        let remainingStdout = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+        let remainingStderr = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        diagnosticsLock.lock()
+        stdoutData.append(remainingStdout)
+        stderrData.append(remainingStderr)
+        let finalStdoutData = stdoutData
+        let finalStderrData = stderrData
+        diagnosticsLock.unlock()
+        let stdout = decodedDiagnosticOutput(from: finalStdoutData)
+        let stderr = decodedDiagnosticOutput(from: finalStderrData)
         let combinedDiagnostics = [stderr, stdout]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
