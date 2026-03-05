@@ -8,6 +8,7 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let compressionQueue = DispatchQueue(label: "FormatKit.CompressionQueue", qos: .userInitiated)
     private let requestStore: RequestStore? = try? AppGroupTransferRequestStore()
+    private let directoryAccessStore = DirectoryAccessStore()
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
     private var settingsWindowController: SettingsWindowController?
@@ -307,10 +308,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let request = try requestStore.take(requestId: requestId)
         try request.validate(expectedAction: expectedAction, now: Date())
 
-        let resolvedItems = try resolveBookmarkURLs(from: request.selectedItemBookmarks)
-        let resolvedParents = try resolveBookmarkURLs(from: request.parentDirectoryBookmarks)
-        let securityScope = SecurityScopedAccessSession(urls: resolvedItems + resolvedParents)
-        NSLog("FormatKit resolved transfer request %@ with %ld item scope(s) and %ld parent scope(s).", requestId.uuidString, resolvedItems.count, resolvedParents.count)
+        let resolvedItems = request.selectedItemPaths.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        guard !resolvedItems.isEmpty else {
+            throw ValidationError.invalidSelection("The request did not contain any selected items.")
+        }
+        let securityScope = try buildDirectoryScope(for: resolvedItems, action: expectedAction)
+        NSLog("FormatKit resolved transfer request %@ with %ld selected item(s).", requestId.uuidString, resolvedItems.count)
         guard securityScope.startAccessing() else {
             securityScope.stopAccessing()
             throw ValidationError.invalidSelection("Could not access the selected files in the sandbox.")
@@ -329,22 +332,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return requestId
     }
 
-    private func resolveBookmarkURLs(from bookmarkDataItems: [Data]) throws -> [URL] {
-        var urls: [URL] = []
-        for bookmarkData in bookmarkDataItems {
-            var isStale = false
-            let url = try URL(
-                resolvingBookmarkData: bookmarkData,
-                options: [.withSecurityScope],
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            )
-            guard !isStale else {
-                throw TransferRequestStoreError.staleRequest
+    private func buildDirectoryScope(for selection: [URL], action: TransferAction) throws -> SecurityScopedAccessSession {
+        let requiredDirectories = Set(selection.map { $0.deletingLastPathComponent().standardizedFileURL })
+        var grantedDirectories = try directoryAccessStore.resolvedDirectories()
+
+        for requiredDirectory in requiredDirectories {
+            if grantedDirectories.contains(where: { Self.directory($0, covers: requiredDirectory) }) {
+                continue
             }
-            urls.append(url.standardizedFileURL)
+
+            let grantedDirectory = try requestDirectoryAccess(for: requiredDirectory, action: action)
+            try directoryAccessStore.store(directoryURL: grantedDirectory)
+            grantedDirectories = try directoryAccessStore.resolvedDirectories()
         }
-        return urls
+
+        guard !grantedDirectories.isEmpty else {
+            throw ValidationError.invalidSelection("No accessible directories were granted for this request.")
+        }
+
+        return SecurityScopedAccessSession(urls: grantedDirectories)
+    }
+
+    private func requestDirectoryAccess(for requiredDirectory: URL, action: TransferAction) throws -> URL {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = false
+        panel.directoryURL = requiredDirectory
+        panel.message = "Grant FormatKit access to the folder that contains the selected item for \(action.rawValue)."
+        panel.prompt = "Grant Access"
+
+        guard panel.runModal() == .OK, let chosenDirectory = panel.url?.standardizedFileURL else {
+            throw ValidationError.invalidSelection("Folder access was not granted.")
+        }
+
+        guard Self.directory(chosenDirectory, covers: requiredDirectory) else {
+            throw ValidationError.invalidSelection("The selected folder does not include \(requiredDirectory.path).")
+        }
+
+        return chosenDirectory
+    }
+
+    private static func directory(_ grantedDirectory: URL, covers requiredDirectory: URL) -> Bool {
+        let grantedPath = grantedDirectory.standardizedFileURL.path
+        let requiredPath = requiredDirectory.standardizedFileURL.path
+        if grantedPath == "/" {
+            return requiredPath.hasPrefix("/")
+        }
+        if requiredPath == grantedPath {
+            return true
+        }
+        return requiredPath.hasPrefix(grantedPath + "/")
     }
 
     private func requestFailureMessage(for action: TransferAction, error: Error) -> String {
@@ -1051,6 +1091,68 @@ private final class SettingsWindowController: NSWindowController {
         showWindow(nil)
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+private final class DirectoryAccessStore {
+    private let defaults: UserDefaults
+    private let storageKey = "FinderGrantedDirectoryBookmarks"
+
+    init(defaults: UserDefaults = UserDefaults(suiteName: TransferRequestDefaults.appGroupIdentifier) ?? .standard) {
+        self.defaults = defaults
+    }
+
+    func resolvedDirectories() throws -> [URL] {
+        let bookmarkDataItems = defaults.array(forKey: storageKey) as? [Data] ?? []
+        var resolved: [URL] = []
+        var freshBookmarkData: [Data] = []
+
+        for bookmarkData in bookmarkDataItems {
+            var isStale = false
+            do {
+                let url = try URL(
+                    resolvingBookmarkData: bookmarkData,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                ).standardizedFileURL
+                if isStale { continue }
+                freshBookmarkData.append(bookmarkData)
+                resolved.append(url)
+            } catch {
+                continue
+            }
+        }
+
+        if freshBookmarkData.count != bookmarkDataItems.count {
+            defaults.set(freshBookmarkData, forKey: storageKey)
+        }
+
+        return deduplicatedURLs(resolved)
+    }
+
+    func store(directoryURL: URL) throws {
+        let standardized = directoryURL.standardizedFileURL
+        let bookmarkData = try standardized.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+        var existing = defaults.array(forKey: storageKey) as? [Data] ?? []
+        existing.append(bookmarkData)
+        defaults.set(existing, forKey: storageKey)
+    }
+
+    private func deduplicatedURLs(_ urls: [URL]) -> [URL] {
+        var seen = Set<String>()
+        var deduped: [URL] = []
+        for url in urls {
+            let path = url.path
+            guard !seen.contains(path) else { continue }
+            seen.insert(path)
+            deduped.append(url)
+        }
+        return deduped
     }
 }
 

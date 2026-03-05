@@ -95,54 +95,26 @@ final class FinderSync: FIFinderSync {
     }
 
     private func persistTransferRequest(action: TransferAction, urls: [URL], requestStore: RequestStore) throws -> UUID {
-        var startedScopeURLs: [URL] = []
         var seen = Set<String>()
+        var selectedPaths: [String] = []
         for url in urls {
             let standardized = url.standardizedFileURL
             let key = standardized.path
             guard !seen.contains(key) else { continue }
             seen.insert(key)
-            if standardized.startAccessingSecurityScopedResource() {
-                startedScopeURLs.append(standardized)
-            }
+            selectedPaths.append(key)
         }
-        defer {
-            for url in startedScopeURLs {
-                url.stopAccessingSecurityScopedResource()
-            }
+        guard !selectedPaths.isEmpty else {
+            throw TransferRequestStoreError.ioFailure("No selectable file paths were available.")
         }
-        NSLog("FormatKitFinderExtension started scope for %ld of %ld selected item(s).", startedScopeURLs.count, urls.count)
-
-        var itemBookmarks: [Data] = []
-        for url in urls {
-            do {
-                let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-                itemBookmarks.append(bookmark)
-            } catch {
-                throw TransferRequestStoreError.ioFailure("Could not create selected item bookmark for \(url.path): \(error.localizedDescription)")
-            }
-        }
-        NSLog("FormatKitFinderExtension created %ld selected-item bookmark(s).", itemBookmarks.count)
-
-        let parentURLs = Set(urls.map { $0.deletingLastPathComponent().standardizedFileURL })
-        var parentBookmarks: [Data] = []
-        for parentURL in parentURLs {
-            do {
-                let bookmark = try parentURL.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-                parentBookmarks.append(bookmark)
-            } catch {
-                throw TransferRequestStoreError.ioFailure("Could not create parent directory bookmark for \(parentURL.path): \(error.localizedDescription)")
-            }
-        }
-        NSLog("FormatKitFinderExtension created %ld parent-directory bookmark(s).", parentBookmarks.count)
+        NSLog("FormatKitFinderExtension prepared %ld selected path(s).", selectedPaths.count)
 
         let request = TransferRequest(
             version: TransferRequestDefaults.schemaVersion,
             requestId: UUID(),
             action: action,
             createdAt: Date(),
-            selectedItemBookmarks: itemBookmarks,
-            parentDirectoryBookmarks: parentBookmarks
+            selectedItemPaths: selectedPaths
         )
         try requestStore.cleanupExpiredRequests(now: Date(), maxAge: TransferRequestDefaults.maxAge)
         try requestStore.save(request)

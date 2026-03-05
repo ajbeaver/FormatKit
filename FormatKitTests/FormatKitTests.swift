@@ -133,8 +133,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: Date(),
-            selectedItemBookmarks: [Data("a".utf8)],
-            parentDirectoryBookmarks: [Data("b".utf8)]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
 
         try store.save(request)
@@ -154,8 +153,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .convert,
             createdAt: Date().addingTimeInterval(-600),
-            selectedItemBookmarks: [Data("x".utf8)],
-            parentDirectoryBookmarks: [Data("y".utf8)]
+            selectedItemPaths: ["/tmp/x.txt"]
         )
 
         try store.save(staleRequest)
@@ -184,8 +182,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: Date(),
-            selectedItemBookmarks: [Data("a".utf8)],
-            parentDirectoryBookmarks: [Data("b".utf8)]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
         try store.save(request)
         _ = try store.take(requestId: request.requestId)
@@ -209,8 +206,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: now,
-            selectedItemBookmarks: [Data()],
-            parentDirectoryBookmarks: [Data()]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
         try valid.validate(expectedAction: .archive, now: now)
 
@@ -219,8 +215,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: now,
-            selectedItemBookmarks: [Data()],
-            parentDirectoryBookmarks: [Data()]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
         do {
             try wrongSchema.validate(expectedAction: .archive, now: now)
@@ -238,8 +233,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .convert,
             createdAt: now,
-            selectedItemBookmarks: [Data()],
-            parentDirectoryBookmarks: [Data()]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
         do {
             try wrongAction.validate(expectedAction: .archive, now: now)
@@ -257,8 +251,7 @@ struct FormatKitTests {
             requestId: UUID(),
             action: .archive,
             createdAt: now.addingTimeInterval(-(TransferRequestDefaults.maxAge + 1)),
-            selectedItemBookmarks: [Data()],
-            parentDirectoryBookmarks: [Data()]
+            selectedItemPaths: ["/tmp/a.txt"]
         )
         do {
             try stale.validate(expectedAction: .archive, now: now)
