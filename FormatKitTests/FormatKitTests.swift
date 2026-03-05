@@ -59,9 +59,9 @@ struct FormatKitTests {
         #expect(ArchiveFormat.fromPickerDisplayName("XZ") == .tarXz)
         #expect(ArchiveFormat.fromPickerDisplayName("TAR.GZ") == nil)
 
-        #expect(ArchiveFormat.tarGz.processArguments(outputFileName: "a.tar.gz", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-czf", "a.tar.gz"]))
-        #expect(ArchiveFormat.tarXz.processArguments(outputFileName: "a.tar.xz", relativeItemNames: ["foo"]).prefix(2).elementsEqual(["-cJf", "a.tar.xz"]))
-        #expect(ArchiveFormat.zip.processArguments(outputFileName: "a.zip", relativeItemNames: ["foo"]).prefix(3).elementsEqual(["-q", "-r", "a.zip"]))
+        #expect(ArchiveFormat.tarGz.processArguments(outputFileName: "a.tar.gz", relativeItemNames: ["foo"]).prefix(3).elementsEqual(["-czf", "a.tar.gz", "--"]))
+        #expect(ArchiveFormat.tarXz.processArguments(outputFileName: "a.tar.xz", relativeItemNames: ["foo"]).prefix(3).elementsEqual(["-cJf", "a.tar.xz", "--"]))
+        #expect(ArchiveFormat.zip.processArguments(outputFileName: "a.zip", relativeItemNames: ["foo"]).prefix(4).elementsEqual(["-q", "-r", "a.zip", "--"]))
     }
 
     @Test func audioDetectionGatingOnlyAcceptsSupportedAudioExtensions() {
@@ -263,5 +263,52 @@ struct FormatKitTests {
                 Issue.record("Unexpected stale error: \(error)")
             }
         }
+    }
+
+    @Test func directoryAccessStoreReplacesBookmarkForSameNormalizedPath() throws {
+        let suiteName = "FormatKitTests.DirectoryAccessStore.Replace.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fileManager = FileManager.default
+        let tempDirectory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: tempDirectory) }
+
+        let store = DirectoryAccessStore(defaults: defaults)
+        try store.store(directoryURL: tempDirectory)
+        try store.store(directoryURL: tempDirectory.standardizedFileURL)
+
+        let raw = defaults.dictionary(forKey: DirectoryAccessStore.storageKey) as? [String: Data] ?? [:]
+        #expect(raw.count == 1)
+        #expect(raw.keys.first == tempDirectory.standardizedFileURL.path)
+    }
+
+    @Test func directoryAccessStoreCleansInvalidBookmarksAndChoosesMostSpecificCover() throws {
+        let suiteName = "FormatKitTests.DirectoryAccessStore.Lookup.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defaults.removePersistentDomain(forName: suiteName)
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let child = root.appendingPathComponent("child", isDirectory: true)
+        try fileManager.createDirectory(at: child, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        var seedMap: [String: Data] = ["/invalid/path": Data("bad".utf8)]
+        defaults.set(seedMap, forKey: DirectoryAccessStore.storageKey)
+        let store = DirectoryAccessStore(defaults: defaults)
+
+        try store.store(directoryURL: root)
+        try store.store(directoryURL: child)
+
+        let target = child.appendingPathComponent("file.txt")
+        let matched = try store.lookupCoveringDirectory(for: target.deletingLastPathComponent())
+        #expect(matched?.standardizedFileURL.path == child.standardizedFileURL.path)
+
+        seedMap = defaults.dictionary(forKey: DirectoryAccessStore.storageKey) as? [String: Data] ?? [:]
+        #expect(seedMap["/invalid/path"] == nil)
     }
 }

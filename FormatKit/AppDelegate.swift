@@ -12,7 +12,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var isArchiving = false
     private var progressWindowController: ArchivingProgressWindowController?
     private var settingsWindowController: SettingsWindowController?
-    private var didReceiveOpenRequest = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let requestStore {
@@ -32,10 +31,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 return
             }
-            DispatchQueue.main.async { [weak self] in
-                guard let self, !self.didReceiveOpenRequest else { return }
-                NSApp.terminate(nil)
-            }
             return
         }
 
@@ -43,7 +38,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
-        didReceiveOpenRequest = true
         guard let firstURL = urls.first else { return }
         handleIncomingURL(firstURL)
     }
@@ -334,23 +328,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func buildDirectoryScope(for selection: [URL], action: TransferAction) throws -> SecurityScopedAccessSession {
         let requiredDirectories = Set(selection.map { $0.deletingLastPathComponent().standardizedFileURL })
-        var grantedDirectories = try directoryAccessStore.resolvedDirectories()
-
+        var scopeDirectories: [URL] = []
         for requiredDirectory in requiredDirectories {
-            if grantedDirectories.contains(where: { Self.directory($0, covers: requiredDirectory) }) {
-                continue
+            let grantedDirectory: URL
+            if let existing = try directoryAccessStore.lookupCoveringDirectory(for: requiredDirectory) {
+                grantedDirectory = existing
+            } else {
+                let chosenDirectory = try requestDirectoryAccess(for: requiredDirectory, action: action)
+                try directoryAccessStore.store(directoryURL: chosenDirectory)
+                grantedDirectory = chosenDirectory
             }
-
-            let grantedDirectory = try requestDirectoryAccess(for: requiredDirectory, action: action)
-            try directoryAccessStore.store(directoryURL: grantedDirectory)
-            grantedDirectories = try directoryAccessStore.resolvedDirectories()
+            scopeDirectories.append(grantedDirectory)
         }
 
-        guard !grantedDirectories.isEmpty else {
+        guard !scopeDirectories.isEmpty else {
             throw ValidationError.invalidSelection("No accessible directories were granted for this request.")
         }
 
-        return SecurityScopedAccessSession(urls: grantedDirectories)
+        return SecurityScopedAccessSession(urls: scopeDirectories)
     }
 
     private func requestDirectoryAccess(for requiredDirectory: URL, action: TransferAction) throws -> URL {
@@ -375,7 +370,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return chosenDirectory
     }
 
-    private static func directory(_ grantedDirectory: URL, covers requiredDirectory: URL) -> Bool {
+    fileprivate static func directory(_ grantedDirectory: URL, covers requiredDirectory: URL) -> Bool {
         let grantedPath = grantedDirectory.standardizedFileURL.path
         let requiredPath = requiredDirectory.standardizedFileURL.path
         if grantedPath == "/" {
@@ -606,8 +601,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             relativeItemNames: job.relativeItemNames
         )
 
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        process.standardOutput = stdoutPipe
+        process.standardError = stderrPipe
 
         do {
             try process.run()
@@ -621,8 +618,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             )
         }
 
-        let stdout = ""
-        let stderr = ""
+        let stdout = decodedDiagnosticOutput(from: stdoutPipe.fileHandleForReading.readDataToEndOfFile())
+        let stderr = decodedDiagnosticOutput(from: stderrPipe.fileHandleForReading.readDataToEndOfFile())
         let combinedDiagnostics = [stderr, stdout]
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .joined(separator: "\n")
@@ -908,6 +905,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .joined(separator: "\n")
     }
 
+    nonisolated private static func decodedDiagnosticOutput(from data: Data, byteLimit: Int = 16_384) -> String {
+        let truncated = data.count > byteLimit ? data.prefix(byteLimit) : data[...]
+        return String(data: Data(truncated), encoding: .utf8) ?? ""
+    }
+
     private func loadVideoTracksSync(from asset: AVURLAsset) -> [AVAssetTrack] {
         if #available(macOS 15.0, *) {
             let resultBox = SyncResultBox<Result<[AVAssetTrack], Error>?>(nil)
@@ -1094,41 +1096,43 @@ private final class SettingsWindowController: NSWindowController {
     }
 }
 
-private final class DirectoryAccessStore {
+final class DirectoryAccessStore {
     private let defaults: UserDefaults
-    private let storageKey = "FinderGrantedDirectoryBookmarks"
+    static let storageKey = "FinderGrantedDirectoryBookmarks"
 
     init(defaults: UserDefaults = UserDefaults(suiteName: TransferRequestDefaults.appGroupIdentifier) ?? .standard) {
         self.defaults = defaults
     }
 
-    func resolvedDirectories() throws -> [URL] {
-        let bookmarkDataItems = defaults.array(forKey: storageKey) as? [Data] ?? []
-        var resolved: [URL] = []
-        var freshBookmarkData: [Data] = []
+    func lookupCoveringDirectory(for requiredDirectory: URL) throws -> URL? {
+        let required = requiredDirectory.standardizedFileURL
+        var bookmarkMap = rawBookmarkMap()
+        var changed = false
+        var resolvedPairs: [(path: String, url: URL)] = []
 
-        for bookmarkData in bookmarkDataItems {
-            var isStale = false
+        for (key, bookmarkData) in bookmarkMap {
             do {
-                let url = try URL(
-                    resolvingBookmarkData: bookmarkData,
-                    options: [.withSecurityScope],
-                    relativeTo: nil,
-                    bookmarkDataIsStale: &isStale
-                ).standardizedFileURL
-                if isStale { continue }
-                freshBookmarkData.append(bookmarkData)
-                resolved.append(url)
+                let resolved = try resolveBookmark(bookmarkData)
+                guard resolved.path == key else {
+                    bookmarkMap.removeValue(forKey: key)
+                    changed = true
+                    continue
+                }
+                resolvedPairs.append((key, resolved))
             } catch {
-                continue
+                bookmarkMap.removeValue(forKey: key)
+                changed = true
             }
         }
 
-        if freshBookmarkData.count != bookmarkDataItems.count {
-            defaults.set(freshBookmarkData, forKey: storageKey)
+        if changed {
+            defaults.set(bookmarkMap, forKey: Self.storageKey)
         }
 
-        return deduplicatedURLs(resolved)
+        return resolvedPairs
+            .filter { AppDelegate.directory($0.url, covers: required) }
+            .max { $0.path.count < $1.path.count }?
+            .url
     }
 
     func store(directoryURL: URL) throws {
@@ -1138,21 +1142,27 @@ private final class DirectoryAccessStore {
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
-        var existing = defaults.array(forKey: storageKey) as? [Data] ?? []
-        existing.append(bookmarkData)
-        defaults.set(existing, forKey: storageKey)
+        var bookmarkMap = rawBookmarkMap()
+        bookmarkMap[standardized.path] = bookmarkData
+        defaults.set(bookmarkMap, forKey: Self.storageKey)
     }
 
-    private func deduplicatedURLs(_ urls: [URL]) -> [URL] {
-        var seen = Set<String>()
-        var deduped: [URL] = []
-        for url in urls {
-            let path = url.path
-            guard !seen.contains(path) else { continue }
-            seen.insert(path)
-            deduped.append(url)
+    private func rawBookmarkMap() -> [String: Data] {
+        defaults.dictionary(forKey: Self.storageKey) as? [String: Data] ?? [:]
+    }
+
+    private func resolveBookmark(_ bookmarkData: Data) throws -> URL {
+        var isStale = false
+        let url = try URL(
+            resolvingBookmarkData: bookmarkData,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ).standardizedFileURL
+        if isStale {
+            throw TransferRequestStoreError.staleRequest
         }
-        return deduped
+        return url
     }
 }
 
